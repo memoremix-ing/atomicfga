@@ -1,0 +1,489 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/memoremix-ing/atomicfga/bench
+cpu: Apple M2
+BenchmarkRead/sqlite/check/direct/openfga-8         	   14085	     85339 ns/op	         1.000 stmts/op	   21661 B/op	     354 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-tx-8    	   10000	    105442 ns/op	         1.000 stmts/op	         1.000 trips/op	   24496 B/op	     391 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-in-tx-8 	   10000	    102171 ns/op	         1.000 stmts/op	         1.000 trips/op	   23644 B/op	     377 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/openfga-8  	   14589	     82950 ns/op	         1.000 stmts/op	   20849 B/op	     327 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-tx-8         	   12702	     94357 ns/op	         1.000 stmts/op	         1.000 trips/op	   23355 B/op	     362 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-in-tx-8      	   12800	     93603 ns/op	         1.000 stmts/op	         1.000 trips/op	   22599 B/op	     348 allocs/op
+BenchmarkRead/sqlite/check/computed/openfga-8                   	    2312	    481442 ns/op	         6.966 stmts/op	  141888 B/op	    2418 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-tx-8              	    2900	    398886 ns/op	         6.199 stmts/op	         6.199 trips/op	  141742 B/op	    2283 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-in-tx-8           	    3074	    400674 ns/op	         6.228 stmts/op	         6.228 trips/op	  141641 B/op	    2268 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/openfga-8              	     942	   1233683 ns/op	        15.99 stmts/op	  316401 B/op	    5146 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-tx-8         	    1030	   1156406 ns/op	        16.00 stmts/op	        16.00 trips/op	  334595 B/op	    5203 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-in-tx-8      	    1042	   1138124 ns/op	        16.00 stmts/op	        16.00 trips/op	  335708 B/op	    5190 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/openfga-8            	     604	   1960826 ns/op	        36.93 stmts/op	  760681 B/op	   12454 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-tx-8       	     603	   1988159 ns/op	        35.80 stmts/op	        35.80 trips/op	  769532 B/op	   12281 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-in-tx-8    	     606	   1969742 ns/op	        35.80 stmts/op	        35.80 trips/op	  766031 B/op	   12265 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/openfga-8            	    2034	    620051 ns/op	         8.000 stmts/op	  163116 B/op	    2645 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-tx-8       	    2176	    546566 ns/op	         7.984 stmts/op	         7.984 trips/op	  169344 B/op	    2548 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-in-tx-8    	    2229	    542223 ns/op	         7.970 stmts/op	         7.970 trips/op	  168683 B/op	    2533 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/openfga-8          	    2132	    630637 ns/op	         8.000 stmts/op	  162922 B/op	    2627 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-tx-8     	    1888	    599055 ns/op	         8.000 stmts/op	         8.000 trips/op	  165708 B/op	    2520 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-in-tx-8  	    2220	    548846 ns/op	         8.000 stmts/op	         8.000 trips/op	  166917 B/op	    2506 allocs/op
+BenchmarkRead/sqlite/check/intersection/openfga-8               	    1230	    971329 ns/op	         9.976 stmts/op	  223475 B/op	    3763 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-tx-8          	    1989	    610089 ns/op	         9.087 stmts/op	         9.087 trips/op	  217716 B/op	    3443 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-in-tx-8       	    2035	    612171 ns/op	         9.068 stmts/op	         9.068 trips/op	  216619 B/op	    3427 allocs/op
+BenchmarkRead/sqlite/check/exclusion/openfga-8                  	    3170	    669599 ns/op	         7.159 stmts/op	  163379 B/op	    2758 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-tx-8             	    6500	    185217 ns/op	         1.975 stmts/op	         1.975 trips/op	  148944 B/op	    2350 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-in-tx-8          	    6460	    178926 ns/op	         1.977 stmts/op	         1.977 trips/op	  148307 B/op	    2335 allocs/op
+BenchmarkRead/sqlite/check/condition/openfga-8                  	   13623	     88101 ns/op	         1.000 stmts/op	   24064 B/op	     389 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-tx-8             	   10000	    105436 ns/op	         1.000 stmts/op	         1.000 trips/op	   26628 B/op	     428 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-in-tx-8          	   12054	     99660 ns/op	         1.000 stmts/op	         1.000 trips/op	   25807 B/op	     414 allocs/op
+BenchmarkRead/sqlite/batch-check/25/openfga-8                   	      60	  23439241 ns/op	       175.0 stmts/op	 3857123 B/op	   65113 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-tx-8              	     100	  10266873 ns/op	       174.2 stmts/op	       174.2 trips/op	 3465956 B/op	   56225 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-in-tx-8           	     100	  10039584 ns/op	       174.5 stmts/op	       174.5 trips/op	 3473481 B/op	   56197 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/openfga-8                	     273	   4390532 ns/op	         9.000 stmts/op	 4986961 B/op	  117697 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-tx-8           	     195	   6126471 ns/op	         9.000 stmts/op	         9.000 trips/op	 5217127 B/op	  118438 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-in-tx-8        	     195	   6224885 ns/op	         9.000 stmts/op	         9.000 trips/op	 5217659 B/op	  118422 allocs/op
+BenchmarkRead/sqlite/list-users/200/openfga-8                   	    1382	    883189 ns/op	         4.000 stmts/op	  632746 B/op	    9637 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-tx-8              	    1458	    820441 ns/op	         4.000 stmts/op	         4.000 trips/op	  682744 B/op	    9811 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-in-tx-8           	    1497	    806873 ns/op	         4.000 stmts/op	         4.000 trips/op	  682794 B/op	    9798 allocs/op
+BenchmarkRead/postgres/check/direct/openfga-8                   	    7629	    162507 ns/op	         1.000 stmts/op	   18804 B/op	     295 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-tx-8              	    2925	    412306 ns/op	         1.000 stmts/op	         1.000 trips/op	   22684 B/op	     362 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-in-tx-8           	    6885	    172951 ns/op	         1.000 stmts/op	         1.000 trips/op	   21771 B/op	     345 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-tx-8          	    2989	    391229 ns/op	         1.000 stmts/op	         1.000 trips/op	   20828 B/op	     332 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-in-tx-8       	    7447	    163786 ns/op	         1.000 stmts/op	         1.000 trips/op	   20744 B/op	     321 allocs/op
+BenchmarkRead/postgres/check/direct-denied/openfga-8            	    7606	    156280 ns/op	         1.000 stmts/op	   18098 B/op	     280 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-tx-8       	    3025	    402514 ns/op	         1.000 stmts/op	         1.000 trips/op	   21584 B/op	     329 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-in-tx-8    	    7032	    167418 ns/op	         1.000 stmts/op	         1.000 trips/op	   20961 B/op	     312 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-tx-8   	    3049	    388067 ns/op	         1.000 stmts/op	         1.000 trips/op	   20566 B/op	     313 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-in-tx-8         	    7448	    160653 ns/op	         1.000 stmts/op	         1.000 trips/op	   20121 B/op	     302 allocs/op
+BenchmarkRead/postgres/check/computed/openfga-8                          	    2509	    409173 ns/op	         7.000 stmts/op	  117121 B/op	    1894 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-tx-8                     	    1021	   1162052 ns/op	         6.377 stmts/op	         6.377 trips/op	  131352 B/op	    2099 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-in-tx-8                  	    1281	    924524 ns/op	         6.355 stmts/op	         6.355 trips/op	  131650 B/op	    2082 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-tx-8                 	    1982	    606250 ns/op	         7.000 stmts/op	         2.012 trips/op	  133477 B/op	    2081 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-in-tx-8              	    3212	    376194 ns/op	         7.000 stmts/op	         2.014 trips/op	  132302 B/op	    2070 allocs/op
+BenchmarkRead/postgres/check/nested-groups/openfga-8                     	     681	   1733825 ns/op	        16.00 stmts/op	  270872 B/op	    4102 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-tx-8                	     452	   2657566 ns/op	        16.00 stmts/op	        16.00 trips/op	  310839 B/op	    4755 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-in-tx-8             	     498	   2426326 ns/op	        16.00 stmts/op	        16.00 trips/op	  311980 B/op	    4741 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-tx-8            	     602	   1799346 ns/op	        16.00 stmts/op	        11.01 trips/op	  300170 B/op	    4486 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-in-tx-8         	     682	   1781273 ns/op	        16.00 stmts/op	        11.01 trips/op	  296868 B/op	    4473 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/openfga-8                   	     429	   2760980 ns/op	        37.00 stmts/op	  643687 B/op	   10086 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-tx-8              	     222	   5377610 ns/op	        35.58 stmts/op	        35.58 trips/op	  731356 B/op	   11339 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-in-tx-8           	     225	   5192329 ns/op	        35.54 stmts/op	        35.54 trips/op	  726375 B/op	   11319 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-tx-8          	     316	   3768753 ns/op	        37.00 stmts/op	        22.00 trips/op	  712626 B/op	   11119 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-in-tx-8       	     336	   3563071 ns/op	        37.00 stmts/op	        22.00 trips/op	  709417 B/op	   11107 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/openfga-8                   	    2505	    494141 ns/op	         8.000 stmts/op	  132548 B/op	    2049 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-tx-8              	     848	   1442359 ns/op	         7.986 stmts/op	         7.986 trips/op	  156783 B/op	    2325 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-in-tx-8           	    1008	   1177449 ns/op	         7.993 stmts/op	         7.993 trips/op	  155664 B/op	    2308 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-tx-8          	    1911	    615161 ns/op	         8.000 stmts/op	         2.039 trips/op	  155233 B/op	    2285 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-in-tx-8       	    3091	    384601 ns/op	         8.000 stmts/op	         2.045 trips/op	  154701 B/op	    2275 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/openfga-8                 	    2445	    505631 ns/op	         8.000 stmts/op	  131825 B/op	    2034 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-tx-8            	     848	   1415496 ns/op	         8.000 stmts/op	         8.000 trips/op	  154883 B/op	    2294 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-in-tx-8         	    1006	   1177730 ns/op	         8.000 stmts/op	         8.000 trips/op	  156071 B/op	    2276 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-tx-8        	    2037	    610052 ns/op	         8.000 stmts/op	         2.045 trips/op	  154187 B/op	    2267 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-in-tx-8     	    3123	    385613 ns/op	         8.000 stmts/op	         2.047 trips/op	  154560 B/op	    2256 allocs/op
+BenchmarkRead/postgres/check/intersection/openfga-8                      	    2125	    562165 ns/op	        10.00 stmts/op	  179769 B/op	    2871 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-tx-8                 	     740	   1639176 ns/op	         9.535 stmts/op	         9.535 trips/op	  201561 B/op	    3174 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-in-tx-8              	     883	   1400395 ns/op	         9.505 stmts/op	         9.505 trips/op	  200779 B/op	    3156 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-tx-8             	    1743	    690220 ns/op	        10.00 stmts/op	         2.034 trips/op	  202502 B/op	    3130 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-in-tx-8          	    2643	    462423 ns/op	        10.00 stmts/op	         2.019 trips/op	  201106 B/op	    3118 allocs/op
+BenchmarkRead/postgres/check/exclusion/openfga-8                         	    2664	    399056 ns/op	         7.969 stmts/op	  142075 B/op	    2275 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-tx-8                    	    1946	    608904 ns/op	         1.983 stmts/op	         1.983 trips/op	  150423 B/op	    2386 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-in-tx-8                 	    3264	    363318 ns/op	         1.983 stmts/op	         1.983 trips/op	  149391 B/op	    2368 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-tx-8                	    1899	    638646 ns/op	         7.995 stmts/op	         2.026 trips/op	  160431 B/op	    2486 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-in-tx-8             	    3037	    395259 ns/op	         7.999 stmts/op	         2.021 trips/op	  160279 B/op	    2474 allocs/op
+BenchmarkRead/postgres/check/condition/openfga-8                         	    7546	    162896 ns/op	         1.000 stmts/op	   22233 B/op	     348 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-tx-8                    	    2956	    410961 ns/op	         1.000 stmts/op	         1.000 trips/op	   25392 B/op	     405 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-in-tx-8                 	    6531	    180296 ns/op	         1.000 stmts/op	         1.000 trips/op	   24608 B/op	     388 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-tx-8                	    2991	    400586 ns/op	         1.000 stmts/op	         1.000 trips/op	   24037 B/op	     376 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-in-tx-8             	    7065	    166893 ns/op	         1.000 stmts/op	         1.000 trips/op	   23415 B/op	     365 allocs/op
+BenchmarkRead/postgres/batch-check/25/openfga-8                          	     164	   7282403 ns/op	       175.0 stmts/op	 2933406 B/op	   46746 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-tx-8                     	      45	  25186686 ns/op	       174.4 stmts/op	       174.4 trips/op	 3289669 B/op	   50832 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-in-tx-8                  	      45	  25152957 ns/op	       174.6 stmts/op	       174.6 trips/op	 3292529 B/op	   50830 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-tx-8                 	     391	   3124183 ns/op	       175.0 stmts/op	         3.921 trips/op	 3348421 B/op	   50296 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-in-tx-8              	     412	   2842297 ns/op	       175.0 stmts/op	         3.898 trips/op	 3347601 B/op	   50281 allocs/op
+BenchmarkRead/postgres/list-objects/1000/openfga-8                       	     345	   3419248 ns/op	         9.000 stmts/op	 4589129 B/op	  100705 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-tx-8                  	     207	   5398371 ns/op	         9.000 stmts/op	         9.000 trips/op	 4938871 B/op	  109003 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-in-tx-8               	     261	   4594047 ns/op	         9.000 stmts/op	         9.000 trips/op	 4935416 B/op	  108985 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-tx-8              	     280	   4263682 ns/op	         9.000 stmts/op	         4.004 trips/op	 5120115 B/op	  111939 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-in-tx-8           	     308	   4052467 ns/op	         9.000 stmts/op	         4.000 trips/op	 5115311 B/op	  111929 allocs/op
+BenchmarkRead/postgres/list-users/200/openfga-8                          	    1584	    740479 ns/op	         4.000 stmts/op	  553211 B/op	    6580 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-tx-8                     	     974	   1191925 ns/op	         4.000 stmts/op	         4.000 trips/op	  631097 B/op	    8327 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-in-tx-8                  	    1292	    950696 ns/op	         4.000 stmts/op	         4.000 trips/op	  630384 B/op	    8310 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-tx-8                 	    1065	   1197808 ns/op	         4.000 stmts/op	         2.000 trips/op	  665176 B/op	    8893 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-in-tx-8              	    1360	    950200 ns/op	         4.000 stmts/op	         2.000 trips/op	  665836 B/op	    8883 allocs/op
+BenchmarkRead/mysql/check/direct/openfga-8                               	    3614	    290713 ns/op	         1.000 stmts/op	   19714 B/op	     319 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-tx-8                          	    2188	    545959 ns/op	         1.000 stmts/op	         1.000 trips/op	   22479 B/op	     373 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-in-tx-8                       	    3828	    303423 ns/op	         1.000 stmts/op	         1.000 trips/op	   21919 B/op	     352 allocs/op
+BenchmarkRead/mysql/check/direct-denied/openfga-8                        	    4518	    297850 ns/op	         1.000 stmts/op	   19455 B/op	     303 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-tx-8                   	    2194	    545638 ns/op	         1.000 stmts/op	         1.000 trips/op	   21832 B/op	     345 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-in-tx-8                	    3871	    307148 ns/op	         1.000 stmts/op	         1.000 trips/op	   20928 B/op	     325 allocs/op
+BenchmarkRead/mysql/check/computed/openfga-8                             	    1393	    825532 ns/op	         7.000 stmts/op	  123953 B/op	    2033 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-tx-8                        	     543	   2211205 ns/op	         6.665 stmts/op	         6.665 trips/op	  133352 B/op	    2172 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-in-tx-8                     	     566	   2035216 ns/op	         6.618 stmts/op	         6.618 trips/op	  132752 B/op	    2148 allocs/op
+BenchmarkRead/mysql/check/nested-groups/openfga-8                        	     339	   3593435 ns/op	        16.00 stmts/op	  283466 B/op	    4433 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-tx-8                   	     231	   5176147 ns/op	        16.00 stmts/op	        16.00 trips/op	  315944 B/op	    4861 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-in-tx-8                	     246	   4903817 ns/op	        16.00 stmts/op	        16.00 trips/op	  311774 B/op	    4841 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/openfga-8                      	     199	   5867215 ns/op	        37.00 stmts/op	  669735 B/op	   10818 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-tx-8                 	     100	  10910422 ns/op	        35.71 stmts/op	        35.71 trips/op	  730760 B/op	   11593 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-in-tx-8              	     100	  10669991 ns/op	        35.68 stmts/op	        35.68 trips/op	  717700 B/op	   11571 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/openfga-8                      	    1312	    894847 ns/op	         8.000 stmts/op	  142111 B/op	    2217 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-tx-8                 	     465	   2601180 ns/op	         7.974 stmts/op	         7.974 trips/op	  157601 B/op	    2407 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-in-tx-8              	     519	   2362039 ns/op	         7.992 stmts/op	         7.992 trips/op	  156280 B/op	    2388 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/openfga-8                    	    1258	    981474 ns/op	         8.000 stmts/op	  140995 B/op	    2199 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-tx-8               	     475	   2548884 ns/op	         8.000 stmts/op	         8.000 trips/op	  157060 B/op	    2382 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-in-tx-8            	     518	   2322972 ns/op	         8.000 stmts/op	         8.000 trips/op	  158467 B/op	    2360 allocs/op
+BenchmarkRead/mysql/check/intersection/openfga-8                         	     912	   1129570 ns/op	        10.00 stmts/op	  189522 B/op	    3070 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-tx-8                    	     386	   3083883 ns/op	         9.570 stmts/op	         9.570 trips/op	  203412 B/op	    3267 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-in-tx-8                 	     427	   2798753 ns/op	         9.496 stmts/op	         9.496 trips/op	  203200 B/op	    3244 allocs/op
+BenchmarkRead/mysql/check/exclusion/openfga-8                            	    1458	    864144 ns/op	         8.000 stmts/op	  150219 B/op	    2432 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-tx-8                       	    1312	    912830 ns/op	         1.980 stmts/op	         1.980 trips/op	  145937 B/op	    2358 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-in-tx-8                    	    1792	    657669 ns/op	         1.983 stmts/op	         1.983 trips/op	  145303 B/op	    2337 allocs/op
+BenchmarkRead/mysql/check/condition/openfga-8                            	    3998	    301761 ns/op	         1.000 stmts/op	   22391 B/op	     357 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-tx-8                       	    2170	    550367 ns/op	         1.000 stmts/op	         1.000 trips/op	   25695 B/op	     416 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-in-tx-8                    	    3784	    322654 ns/op	         1.000 stmts/op	         1.000 trips/op	   24784 B/op	     395 allocs/op
+BenchmarkRead/mysql/batch-check/25/openfga-8                             	      74	  15972483 ns/op	       175.0 stmts/op	 3108825 B/op	   50165 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-tx-8                        	      22	  51172072 ns/op	       174.5 stmts/op	       174.5 trips/op	 3322409 B/op	   52618 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-in-tx-8                     	      22	  50598038 ns/op	       174.4 stmts/op	       174.4 trips/op	 3311291 B/op	   52622 allocs/op
+BenchmarkRead/mysql/list-objects/1000/openfga-8                          	     250	   4961217 ns/op	         9.000 stmts/op	 4783510 B/op	  108851 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-tx-8                     	     171	   6967151 ns/op	         9.000 stmts/op	         9.000 trips/op	 5278823 B/op	  123052 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-in-tx-8                  	     178	   6695592 ns/op	         9.000 stmts/op	         9.000 trips/op	 5282183 B/op	  123033 allocs/op
+BenchmarkRead/mysql/list-users/200/openfga-8                             	    1093	   1145597 ns/op	         4.000 stmts/op	  593802 B/op	    8244 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-tx-8                        	     627	   1820274 ns/op	         4.000 stmts/op	         4.000 trips/op	  698843 B/op	   11144 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-in-tx-8                     	     732	   1606780 ns/op	         4.000 stmts/op	         4.000 trips/op	  698639 B/op	   11123 allocs/op
+BenchmarkWrite/sqlite/write/tuple/openfga-8                              	    5184	    224037 ns/op	   90300 B/op	    1175 allocs/op
+BenchmarkWrite/sqlite/write/tuple/atomicfga-tx-8                         	    4416	    228225 ns/op	         5.000 stmts/op	   94452 B/op	    1239 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/openfga-8                 	    4087	    295386 ns/op	   90795 B/op	    1188 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/atomicfga-tx-8            	    4963	    246266 ns/op	         5.000 stmts/op	   94553 B/op	    1245 allocs/op
+BenchmarkWrite/postgres/write/tuple/openfga-8                            	    1580	    662936 ns/op	   87619 B/op	    1137 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-tx-8                       	    1417	    840462 ns/op	         5.000 stmts/op	   94445 B/op	    1231 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-pgx-tx-8                   	    1432	    830200 ns/op	         5.000 stmts/op	   91621 B/op	    1190 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/openfga-8               	    1146	   1023810 ns/op	   88158 B/op	    1150 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-tx-8          	    1052	    974190 ns/op	         5.000 stmts/op	   94448 B/op	    1234 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-pgx-tx-8      	    1302	    940068 ns/op	         5.000 stmts/op	   91627 B/op	    1191 allocs/op
+BenchmarkWrite/mysql/write/tuple/openfga-8                               	     697	   1553728 ns/op	   90368 B/op	    1164 allocs/op
+BenchmarkWrite/mysql/write/tuple/atomicfga-tx-8                          	     650	   1926280 ns/op	         5.000 stmts/op	   94079 B/op	    1228 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/openfga-8                  	     478	   2544977 ns/op	   90845 B/op	    1182 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/atomicfga-tx-8             	     592	   2062481 ns/op	         5.000 stmts/op	   94181 B/op	    1233 allocs/op
+PASS
+ok  	github.com/memoremix-ing/atomicfga/bench	191.025s
+goos: darwin
+goarch: arm64
+pkg: github.com/memoremix-ing/atomicfga/bench
+cpu: Apple M2
+BenchmarkRead/sqlite/check/direct/openfga-8         	   13936	     85636 ns/op	         1.000 stmts/op	   20859 B/op	     342 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-tx-8    	   12226	     98203 ns/op	         1.000 stmts/op	         1.000 trips/op	   24014 B/op	     384 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-in-tx-8 	   12580	     95469 ns/op	         1.000 stmts/op	         1.000 trips/op	   23107 B/op	     370 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/openfga-8  	   14949	     81166 ns/op	         1.000 stmts/op	   19993 B/op	     315 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-tx-8         	   12814	     93579 ns/op	         1.000 stmts/op	         1.000 trips/op	   22819 B/op	     355 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-in-tx-8      	   12872	     93164 ns/op	         1.000 stmts/op	         1.000 trips/op	   22118 B/op	     341 allocs/op
+BenchmarkRead/sqlite/check/computed/openfga-8                   	    2413	    489019 ns/op	         6.982 stmts/op	  141907 B/op	    2424 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-tx-8              	    2959	    397177 ns/op	         6.158 stmts/op	         6.158 trips/op	  140959 B/op	    2271 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-in-tx-8           	    2992	    388981 ns/op	         6.124 stmts/op	         6.124 trips/op	  140518 B/op	    2255 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/openfga-8              	    1035	   1141880 ns/op	        16.00 stmts/op	  314813 B/op	    5139 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-tx-8         	    1022	   1152502 ns/op	        16.00 stmts/op	        16.00 trips/op	  335177 B/op	    5195 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-in-tx-8      	    1046	   1147973 ns/op	        16.00 stmts/op	        16.00 trips/op	  332195 B/op	    5182 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/openfga-8            	     612	   1969802 ns/op	        36.91 stmts/op	  762227 B/op	   12459 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-tx-8       	     604	   1982952 ns/op	        35.80 stmts/op	        35.80 trips/op	  768589 B/op	   12281 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-in-tx-8    	     606	   1978120 ns/op	        35.84 stmts/op	        35.84 trips/op	  764563 B/op	   12269 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/openfga-8            	    2008	    584895 ns/op	         8.000 stmts/op	  164308 B/op	    2671 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-tx-8       	    2163	    550953 ns/op	         7.963 stmts/op	         7.963 trips/op	  167654 B/op	    2546 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-in-tx-8    	    2206	    543810 ns/op	         7.985 stmts/op	         7.985 trips/op	  167689 B/op	    2534 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/openfga-8          	    2118	    570289 ns/op	         8.000 stmts/op	  163905 B/op	    2651 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-tx-8     	    2163	    548324 ns/op	         8.000 stmts/op	         8.000 trips/op	  169108 B/op	    2521 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-in-tx-8  	    2196	    538864 ns/op	         8.000 stmts/op	         8.000 trips/op	  167239 B/op	    2507 allocs/op
+BenchmarkRead/sqlite/check/intersection/openfga-8               	    1209	    970768 ns/op	         9.983 stmts/op	  223533 B/op	    3770 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-tx-8          	    1972	    601821 ns/op	         9.122 stmts/op	         9.122 trips/op	  215419 B/op	    3426 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-in-tx-8       	    2055	    606152 ns/op	         9.095 stmts/op	         9.095 trips/op	  215193 B/op	    3410 allocs/op
+BenchmarkRead/sqlite/check/exclusion/openfga-8                  	    1821	    684587 ns/op	         7.140 stmts/op	  162325 B/op	    2743 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-tx-8             	    6489	    186550 ns/op	         1.974 stmts/op	         1.974 trips/op	  150332 B/op	    2356 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-in-tx-8          	    6394	    179644 ns/op	         1.975 stmts/op	         1.975 trips/op	  147993 B/op	    2328 allocs/op
+BenchmarkRead/sqlite/check/condition/openfga-8                  	   13563	     88420 ns/op	         1.000 stmts/op	   23781 B/op	     385 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-tx-8             	   10000	    105724 ns/op	         1.000 stmts/op	         1.000 trips/op	   26357 B/op	     422 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-in-tx-8          	   10000	    100660 ns/op	         1.000 stmts/op	         1.000 trips/op	   25597 B/op	     408 allocs/op
+BenchmarkRead/sqlite/batch-check/25/openfga-8                   	      51	  24355224 ns/op	       175.0 stmts/op	 3852346 B/op	   65130 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-tx-8              	     100	  10354185 ns/op	       174.3 stmts/op	       174.3 trips/op	 3455874 B/op	   56006 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-in-tx-8           	     100	  10415461 ns/op	       174.5 stmts/op	       174.5 trips/op	 3453507 B/op	   55993 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/openfga-8                	     268	   4534034 ns/op	         9.000 stmts/op	 4987227 B/op	  117710 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-tx-8           	     193	   6179821 ns/op	         9.000 stmts/op	         9.000 trips/op	 5221478 B/op	  118438 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-in-tx-8        	     192	   6182376 ns/op	         9.000 stmts/op	         9.000 trips/op	 5214847 B/op	  118426 allocs/op
+BenchmarkRead/sqlite/list-users/200/openfga-8                   	    1338	    912499 ns/op	         4.000 stmts/op	  632630 B/op	    9629 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-tx-8              	    1471	    821429 ns/op	         4.000 stmts/op	         4.000 trips/op	  683565 B/op	    9811 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-in-tx-8           	    1477	    800019 ns/op	         4.000 stmts/op	         4.000 trips/op	  683333 B/op	    9798 allocs/op
+BenchmarkRead/postgres/check/direct/openfga-8                   	    7471	    160359 ns/op	         1.000 stmts/op	   18480 B/op	     291 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-tx-8              	    2930	    405305 ns/op	         1.000 stmts/op	         1.000 trips/op	   22840 B/op	     366 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-in-tx-8           	    6914	    173916 ns/op	         1.000 stmts/op	         1.000 trips/op	   22102 B/op	     349 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-tx-8          	    3478	    387641 ns/op	         1.000 stmts/op	         1.000 trips/op	   21441 B/op	     336 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-in-tx-8       	    7329	    161394 ns/op	         1.000 stmts/op	         1.000 trips/op	   20999 B/op	     325 allocs/op
+BenchmarkRead/postgres/check/direct-denied/openfga-8            	    7622	    156249 ns/op	         1.000 stmts/op	   17996 B/op	     276 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-tx-8       	    2966	    394682 ns/op	         1.000 stmts/op	         1.000 trips/op	   21833 B/op	     333 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-in-tx-8    	    7476	    163789 ns/op	         1.000 stmts/op	         1.000 trips/op	   21153 B/op	     316 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-tx-8   	    3368	    388021 ns/op	         1.000 stmts/op	         1.000 trips/op	   20709 B/op	     316 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-in-tx-8         	    7486	    159979 ns/op	         1.000 stmts/op	         1.000 trips/op	   20275 B/op	     305 allocs/op
+BenchmarkRead/postgres/check/computed/openfga-8                          	    2941	    406689 ns/op	         6.999 stmts/op	  116821 B/op	    1896 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-tx-8                     	    1011	   1284532 ns/op	         6.471 stmts/op	         6.471 trips/op	  134608 B/op	    2111 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-in-tx-8                  	    1272	    946463 ns/op	         6.404 stmts/op	         6.404 trips/op	  133459 B/op	    2091 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-tx-8                 	    1951	    607089 ns/op	         7.000 stmts/op	         2.011 trips/op	  133966 B/op	    2089 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-in-tx-8              	    3135	    387396 ns/op	         7.000 stmts/op	         2.014 trips/op	  132985 B/op	    2077 allocs/op
+BenchmarkRead/postgres/check/nested-groups/openfga-8                     	     669	   1777476 ns/op	        16.00 stmts/op	  274520 B/op	    4119 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-tx-8                	     438	   2702767 ns/op	        16.00 stmts/op	        16.00 trips/op	  310742 B/op	    4759 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-in-tx-8             	     487	   2469196 ns/op	        16.00 stmts/op	        16.00 trips/op	  308906 B/op	    4740 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-tx-8            	     580	   2030490 ns/op	        16.00 stmts/op	        11.01 trips/op	  297676 B/op	    4488 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-in-tx-8         	     648	   1859611 ns/op	        16.00 stmts/op	        11.00 trips/op	  300085 B/op	    4476 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/openfga-8                   	     428	   2792209 ns/op	        37.00 stmts/op	  641380 B/op	   10066 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-tx-8              	     225	   5337004 ns/op	        35.59 stmts/op	        35.59 trips/op	  730063 B/op	   11320 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-in-tx-8           	     231	   5154477 ns/op	        35.58 stmts/op	        35.58 trips/op	  732063 B/op	   11300 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-tx-8          	     319	   3821545 ns/op	        37.00 stmts/op	        22.00 trips/op	  710302 B/op	   11099 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-in-tx-8       	     342	   3505098 ns/op	        37.00 stmts/op	        22.01 trips/op	  706839 B/op	   11086 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/openfga-8                   	    2568	    463752 ns/op	         8.000 stmts/op	  132634 B/op	    2043 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-tx-8              	     834	   1419726 ns/op	         7.992 stmts/op	         7.992 trips/op	  154835 B/op	    2314 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-in-tx-8           	    1015	   1187387 ns/op	         7.990 stmts/op	         7.990 trips/op	  153977 B/op	    2299 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-tx-8          	    1994	    625106 ns/op	         8.000 stmts/op	         2.052 trips/op	  154533 B/op	    2278 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-in-tx-8       	    3087	    385395 ns/op	         8.000 stmts/op	         2.051 trips/op	  155229 B/op	    2267 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/openfga-8                 	    2449	    486582 ns/op	         8.000 stmts/op	  132550 B/op	    2030 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-tx-8            	     848	   1435149 ns/op	         8.000 stmts/op	         8.000 trips/op	  153455 B/op	    2284 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-in-tx-8         	    1018	   1192848 ns/op	         8.000 stmts/op	         8.000 trips/op	  153633 B/op	    2266 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-tx-8        	    1959	    610869 ns/op	         8.000 stmts/op	         2.045 trips/op	  152961 B/op	    2260 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-in-tx-8     	    3134	    381890 ns/op	         8.000 stmts/op	         2.045 trips/op	  153533 B/op	    2247 allocs/op
+BenchmarkRead/postgres/check/intersection/openfga-8                      	    2236	    541397 ns/op	        10.00 stmts/op	  179226 B/op	    2864 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-tx-8                 	     724	   1661735 ns/op	         9.492 stmts/op	         9.492 trips/op	  203328 B/op	    3184 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-in-tx-8              	     858	   1399881 ns/op	         9.530 stmts/op	         9.530 trips/op	  203439 B/op	    3170 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-tx-8             	    1718	    689370 ns/op	         9.999 stmts/op	         2.023 trips/op	  203547 B/op	    3142 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-in-tx-8          	    2625	    455000 ns/op	        10.00 stmts/op	         2.024 trips/op	  201999 B/op	    3131 allocs/op
+BenchmarkRead/postgres/check/exclusion/openfga-8                         	    2809	    401529 ns/op	         7.945 stmts/op	  140669 B/op	    2254 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-tx-8                    	    1948	    611459 ns/op	         1.982 stmts/op	         1.982 trips/op	  150292 B/op	    2393 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-in-tx-8                 	    3279	    363965 ns/op	         1.986 stmts/op	         1.986 trips/op	  149962 B/op	    2377 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-tx-8                	    1916	    636126 ns/op	         7.999 stmts/op	         2.020 trips/op	  161469 B/op	    2494 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-in-tx-8             	    3043	    395791 ns/op	         7.999 stmts/op	         2.023 trips/op	  160511 B/op	    2482 allocs/op
+BenchmarkRead/postgres/check/condition/openfga-8                         	    7306	    164526 ns/op	         1.000 stmts/op	   21538 B/op	     335 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-tx-8                    	    2828	    411658 ns/op	         1.000 stmts/op	         1.000 trips/op	   25015 B/op	     401 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-in-tx-8                 	    6805	    177543 ns/op	         1.000 stmts/op	         1.000 trips/op	   24048 B/op	     384 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-tx-8                	    3018	    398456 ns/op	         1.000 stmts/op	         1.000 trips/op	   23595 B/op	     371 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-in-tx-8             	    7269	    166784 ns/op	         1.000 stmts/op	         1.000 trips/op	   23151 B/op	     360 allocs/op
+BenchmarkRead/postgres/batch-check/25/openfga-8                          	     164	   7310506 ns/op	       175.0 stmts/op	 2941096 B/op	   46795 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-tx-8                     	      44	  25080082 ns/op	       174.2 stmts/op	       174.2 trips/op	 3294258 B/op	   51053 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-in-tx-8                  	      46	  24721177 ns/op	       174.3 stmts/op	       174.3 trips/op	 3294409 B/op	   51024 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-tx-8                 	     390	   3192822 ns/op	       175.0 stmts/op	         3.831 trips/op	 3358558 B/op	   50462 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-in-tx-8              	     415	   2831767 ns/op	       175.0 stmts/op	         4.034 trips/op	 3360298 B/op	   50442 allocs/op
+BenchmarkRead/postgres/list-objects/1000/openfga-8                       	     346	   3416812 ns/op	         9.000 stmts/op	 4591823 B/op	  100706 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-tx-8                  	     242	   4929623 ns/op	         9.000 stmts/op	         9.000 trips/op	 4937557 B/op	  109000 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-in-tx-8               	     243	   5091726 ns/op	         9.000 stmts/op	         9.000 trips/op	 4935895 B/op	  108982 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-tx-8              	     264	   4396944 ns/op	         9.000 stmts/op	         4.004 trips/op	 5117168 B/op	  111940 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-in-tx-8           	     306	   4068965 ns/op	         9.000 stmts/op	         4.000 trips/op	 5113753 B/op	  111928 allocs/op
+BenchmarkRead/postgres/list-users/200/openfga-8                          	    1591	    734531 ns/op	         4.000 stmts/op	  553676 B/op	    6581 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-tx-8                     	     976	   1193265 ns/op	         4.000 stmts/op	         4.000 trips/op	  630203 B/op	    8327 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-in-tx-8                  	    1245	    979812 ns/op	         4.000 stmts/op	         4.000 trips/op	  629564 B/op	    8310 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-tx-8                 	    1058	   1179651 ns/op	         4.000 stmts/op	         2.000 trips/op	  665941 B/op	    8893 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-in-tx-8              	    1292	    936071 ns/op	         4.000 stmts/op	         2.000 trips/op	  664990 B/op	    8882 allocs/op
+BenchmarkRead/mysql/check/direct/openfga-8                               	    3913	    300224 ns/op	         1.000 stmts/op	   20476 B/op	     325 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-tx-8                          	    2257	    554696 ns/op	         1.000 stmts/op	         1.000 trips/op	   23191 B/op	     380 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-in-tx-8                       	    3756	    313441 ns/op	         1.000 stmts/op	         1.000 trips/op	   22394 B/op	     358 allocs/op
+BenchmarkRead/mysql/check/direct-denied/openfga-8                        	    4070	    294922 ns/op	         1.000 stmts/op	   19737 B/op	     308 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-tx-8                   	    2191	    544374 ns/op	         1.000 stmts/op	         1.000 trips/op	   22468 B/op	     352 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-in-tx-8                	    3847	    314140 ns/op	         1.000 stmts/op	         1.000 trips/op	   21525 B/op	     331 allocs/op
+BenchmarkRead/mysql/check/computed/openfga-8                             	    1416	    824175 ns/op	         7.000 stmts/op	  123968 B/op	    2036 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-tx-8                        	     544	   2210004 ns/op	         6.634 stmts/op	         6.634 trips/op	  134203 B/op	    2173 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-in-tx-8                     	     633	   1959855 ns/op	         6.657 stmts/op	         6.657 trips/op	  135544 B/op	    2154 allocs/op
+BenchmarkRead/mysql/check/nested-groups/openfga-8                        	     342	   3563337 ns/op	        16.00 stmts/op	  284890 B/op	    4437 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-tx-8                   	     230	   5175989 ns/op	        16.00 stmts/op	        16.00 trips/op	  315067 B/op	    4867 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-in-tx-8                	     243	   4936388 ns/op	        16.00 stmts/op	        16.00 trips/op	  310056 B/op	    4839 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/openfga-8                      	     208	   5714047 ns/op	        37.00 stmts/op	  672254 B/op	   10849 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-tx-8                 	     100	  11204595 ns/op	        35.72 stmts/op	        35.72 trips/op	  724658 B/op	   11586 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-in-tx-8              	     100	  10698986 ns/op	        35.61 stmts/op	        35.61 trips/op	  735158 B/op	   11554 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/openfga-8                      	    1291	    912182 ns/op	         8.000 stmts/op	  142231 B/op	    2212 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-tx-8                 	     469	   2558489 ns/op	         7.991 stmts/op	         7.991 trips/op	  155357 B/op	    2400 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-in-tx-8              	     512	   2323069 ns/op	         7.986 stmts/op	         7.986 trips/op	  155982 B/op	    2383 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/openfga-8                    	    1242	    985454 ns/op	         8.000 stmts/op	  141722 B/op	    2201 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-tx-8               	     481	   2596824 ns/op	         8.000 stmts/op	         8.000 trips/op	  154171 B/op	    2375 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-in-tx-8            	     514	   2325688 ns/op	         8.000 stmts/op	         8.000 trips/op	  156094 B/op	    2353 allocs/op
+BenchmarkRead/mysql/check/intersection/openfga-8                         	    1098	   1084818 ns/op	        10.00 stmts/op	  190352 B/op	    3080 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-tx-8                    	     391	   3121543 ns/op	         9.537 stmts/op	         9.537 trips/op	  203400 B/op	    3270 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-in-tx-8                 	     430	   2807425 ns/op	         9.474 stmts/op	         9.474 trips/op	  203784 B/op	    3248 allocs/op
+BenchmarkRead/mysql/check/exclusion/openfga-8                            	    1383	    887431 ns/op	         8.000 stmts/op	  149767 B/op	    2433 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-tx-8                       	    1323	    894285 ns/op	         1.981 stmts/op	         1.981 trips/op	  145790 B/op	    2363 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-in-tx-8                    	    1794	    671901 ns/op	         1.983 stmts/op	         1.983 trips/op	  146765 B/op	    2344 allocs/op
+BenchmarkRead/mysql/check/condition/openfga-8                            	    3937	    302278 ns/op	         1.000 stmts/op	   22627 B/op	     359 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-tx-8                       	    2170	    548364 ns/op	         1.000 stmts/op	         1.000 trips/op	   24782 B/op	     411 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-in-tx-8                    	    3690	    386610 ns/op	         1.000 stmts/op	         1.000 trips/op	   24253 B/op	     390 allocs/op
+BenchmarkRead/mysql/batch-check/25/openfga-8                             	      55	  20328529 ns/op	       175.0 stmts/op	 3107850 B/op	   50240 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-tx-8                        	      24	  49107314 ns/op	       174.5 stmts/op	       174.5 trips/op	 3321539 B/op	   52704 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-in-tx-8                     	      22	  50739714 ns/op	       174.5 stmts/op	       174.5 trips/op	 3323846 B/op	   52651 allocs/op
+BenchmarkRead/mysql/list-objects/1000/openfga-8                          	     231	   4960189 ns/op	         9.000 stmts/op	 4782444 B/op	  108854 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-tx-8                     	     138	   8643796 ns/op	         9.000 stmts/op	         9.000 trips/op	 5282408 B/op	  123057 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-in-tx-8                  	     165	   7017415 ns/op	         9.000 stmts/op	         9.000 trips/op	 5279056 B/op	  123033 allocs/op
+BenchmarkRead/mysql/list-users/200/openfga-8                             	    1110	   1080898 ns/op	         4.000 stmts/op	  593637 B/op	    8244 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-tx-8                        	     591	   1851374 ns/op	         4.000 stmts/op	         4.000 trips/op	  698280 B/op	   11143 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-in-tx-8                     	     757	   1699158 ns/op	         4.000 stmts/op	         4.000 trips/op	  698424 B/op	   11123 allocs/op
+BenchmarkWrite/sqlite/write/tuple/openfga-8                              	    4712	    238483 ns/op	   90296 B/op	    1175 allocs/op
+BenchmarkWrite/sqlite/write/tuple/atomicfga-tx-8                         	    5263	    227704 ns/op	         5.000 stmts/op	   94461 B/op	    1240 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/openfga-8                 	    4096	    295905 ns/op	   90779 B/op	    1187 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/atomicfga-tx-8            	    4960	    242553 ns/op	         5.000 stmts/op	   94535 B/op	    1244 allocs/op
+BenchmarkWrite/postgres/write/tuple/openfga-8                            	    1785	    655925 ns/op	   87651 B/op	    1138 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-tx-8                       	    1401	    856840 ns/op	         5.000 stmts/op	   94445 B/op	    1231 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-pgx-tx-8                   	    1436	    835561 ns/op	         5.000 stmts/op	   91619 B/op	    1190 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/openfga-8               	    1170	   1026015 ns/op	   88157 B/op	    1150 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-tx-8          	    1234	   1032835 ns/op	         5.000 stmts/op	   94458 B/op	    1234 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-pgx-tx-8      	    1057	    955991 ns/op	         5.000 stmts/op	   91690 B/op	    1192 allocs/op
+BenchmarkWrite/mysql/write/tuple/openfga-8                               	     811	   1566442 ns/op	   90346 B/op	    1163 allocs/op
+BenchmarkWrite/mysql/write/tuple/atomicfga-tx-8                          	     640	   1854660 ns/op	         5.000 stmts/op	   94092 B/op	    1228 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/openfga-8                  	     476	   2588103 ns/op	   90837 B/op	    1181 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/atomicfga-tx-8             	     584	   2098557 ns/op	         5.000 stmts/op	   94174 B/op	    1233 allocs/op
+PASS
+ok  	github.com/memoremix-ing/atomicfga/bench	190.579s
+goos: darwin
+goarch: arm64
+pkg: github.com/memoremix-ing/atomicfga/bench
+cpu: Apple M2
+BenchmarkRead/sqlite/check/direct/openfga-8         	   14083	     85182 ns/op	         1.000 stmts/op	   21601 B/op	     353 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-tx-8    	   12235	     97930 ns/op	         1.000 stmts/op	         1.000 trips/op	   24162 B/op	     387 allocs/op
+BenchmarkRead/sqlite/check/direct/atomicfga-in-tx-8 	   12607	     95176 ns/op	         1.000 stmts/op	         1.000 trips/op	   23341 B/op	     373 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/openfga-8  	   14590	     82227 ns/op	         1.000 stmts/op	   20852 B/op	     326 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-tx-8         	   12830	     93542 ns/op	         1.000 stmts/op	         1.000 trips/op	   23056 B/op	     358 allocs/op
+BenchmarkRead/sqlite/check/direct-denied/atomicfga-in-tx-8      	   12903	     93230 ns/op	         1.000 stmts/op	         1.000 trips/op	   22281 B/op	     344 allocs/op
+BenchmarkRead/sqlite/check/computed/openfga-8                   	    2350	    487075 ns/op	         6.987 stmts/op	  142126 B/op	    2427 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-tx-8              	    2976	    396335 ns/op	         6.171 stmts/op	         6.171 trips/op	  142840 B/op	    2276 allocs/op
+BenchmarkRead/sqlite/check/computed/atomicfga-in-tx-8           	    2960	    392258 ns/op	         6.185 stmts/op	         6.185 trips/op	  141656 B/op	    2263 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/openfga-8              	    1044	   1145436 ns/op	        16.00 stmts/op	  316465 B/op	    5144 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-tx-8         	    1035	   1161285 ns/op	        16.00 stmts/op	        16.00 trips/op	  335017 B/op	    5203 allocs/op
+BenchmarkRead/sqlite/check/nested-groups/atomicfga-in-tx-8      	    1039	   1153679 ns/op	        16.00 stmts/op	        16.00 trips/op	  334092 B/op	    5189 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/openfga-8            	     613	   2040261 ns/op	        36.90 stmts/op	  761596 B/op	   12482 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-tx-8       	     600	   2016813 ns/op	        35.80 stmts/op	        35.80 trips/op	  764679 B/op	   12224 allocs/op
+BenchmarkRead/sqlite/check/folder-depth-10/atomicfga-in-tx-8    	     602	   1974952 ns/op	        35.80 stmts/op	        35.80 trips/op	  762781 B/op	   12210 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/openfga-8            	    1982	    589779 ns/op	         7.999 stmts/op	  164516 B/op	    2665 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-tx-8       	    2137	    549709 ns/op	         7.976 stmts/op	         7.976 trips/op	  170097 B/op	    2559 allocs/op
+BenchmarkRead/sqlite/check/wide-union-last/atomicfga-in-tx-8    	    2192	    544134 ns/op	         7.969 stmts/op	         7.969 trips/op	  168838 B/op	    2543 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/openfga-8          	    2082	    572117 ns/op	         8.000 stmts/op	  163486 B/op	    2644 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-tx-8     	    2160	    549240 ns/op	         8.000 stmts/op	         8.000 trips/op	  167505 B/op	    2531 allocs/op
+BenchmarkRead/sqlite/check/wide-union-denied/atomicfga-in-tx-8  	    2226	    539133 ns/op	         8.000 stmts/op	         8.000 trips/op	  167301 B/op	    2518 allocs/op
+BenchmarkRead/sqlite/check/intersection/openfga-8               	    1230	    979302 ns/op	         9.978 stmts/op	  224775 B/op	    3775 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-tx-8          	    1940	    607145 ns/op	         9.132 stmts/op	         9.132 trips/op	  217340 B/op	    3437 allocs/op
+BenchmarkRead/sqlite/check/intersection/atomicfga-in-tx-8       	    2002	    599952 ns/op	         9.131 stmts/op	         9.131 trips/op	  216128 B/op	    3424 allocs/op
+BenchmarkRead/sqlite/check/exclusion/openfga-8                  	    1736	    720449 ns/op	         7.429 stmts/op	  168035 B/op	    2839 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-tx-8             	    6590	    185824 ns/op	         1.967 stmts/op	         1.967 trips/op	  149497 B/op	    2350 allocs/op
+BenchmarkRead/sqlite/check/exclusion/atomicfga-in-tx-8          	    6571	    179164 ns/op	         1.973 stmts/op	         1.973 trips/op	  147537 B/op	    2328 allocs/op
+BenchmarkRead/sqlite/check/condition/openfga-8                  	   13638	     87988 ns/op	         1.000 stmts/op	   23811 B/op	     386 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-tx-8             	   10000	    105313 ns/op	         1.000 stmts/op	         1.000 trips/op	   26503 B/op	     424 allocs/op
+BenchmarkRead/sqlite/check/condition/atomicfga-in-tx-8          	   12076	    100057 ns/op	         1.000 stmts/op	         1.000 trips/op	   25792 B/op	     409 allocs/op
+BenchmarkRead/sqlite/batch-check/25/openfga-8                   	      50	  24245237 ns/op	       175.0 stmts/op	 3862723 B/op	   65213 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-tx-8              	     100	  10439035 ns/op	       174.3 stmts/op	       174.3 trips/op	 3456936 B/op	   56132 allocs/op
+BenchmarkRead/sqlite/batch-check/25/atomicfga-in-tx-8           	     100	  10374991 ns/op	       174.3 stmts/op	       174.3 trips/op	 3457998 B/op	   56091 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/openfga-8                	     271	   4420177 ns/op	         9.000 stmts/op	 4981380 B/op	  117706 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-tx-8           	     184	   6422997 ns/op	         9.000 stmts/op	         9.000 trips/op	 5220133 B/op	  118438 allocs/op
+BenchmarkRead/sqlite/list-objects/1000/atomicfga-in-tx-8        	     177	   6514466 ns/op	         9.000 stmts/op	         9.000 trips/op	 5219556 B/op	  118425 allocs/op
+BenchmarkRead/sqlite/list-users/200/openfga-8                   	    1377	    867685 ns/op	         4.000 stmts/op	  630655 B/op	    9603 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-tx-8              	    1459	    820020 ns/op	         4.000 stmts/op	         4.000 trips/op	  684571 B/op	    9812 allocs/op
+BenchmarkRead/sqlite/list-users/200/atomicfga-in-tx-8           	    1466	    808511 ns/op	         4.000 stmts/op	         4.000 trips/op	  683586 B/op	    9798 allocs/op
+BenchmarkRead/postgres/check/direct/openfga-8                   	    7555	    158273 ns/op	         1.000 stmts/op	   18878 B/op	     295 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-tx-8              	    3052	    403519 ns/op	         1.000 stmts/op	         1.000 trips/op	   22683 B/op	     363 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-in-tx-8           	    6942	    173846 ns/op	         1.000 stmts/op	         1.000 trips/op	   21838 B/op	     345 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-tx-8          	    3019	    399137 ns/op	         1.000 stmts/op	         1.000 trips/op	   21095 B/op	     333 allocs/op
+BenchmarkRead/postgres/check/direct/atomicfga-pgx-in-tx-8       	    7395	    162176 ns/op	         1.000 stmts/op	         1.000 trips/op	   20722 B/op	     322 allocs/op
+BenchmarkRead/postgres/check/direct-denied/openfga-8            	    7094	    159918 ns/op	         1.000 stmts/op	   18396 B/op	     281 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-tx-8       	    2938	    405018 ns/op	         1.000 stmts/op	         1.000 trips/op	   21738 B/op	     330 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-in-tx-8    	    7016	    169880 ns/op	         1.000 stmts/op	         1.000 trips/op	   20937 B/op	     313 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-tx-8   	    3061	    393018 ns/op	         1.000 stmts/op	         1.000 trips/op	   20410 B/op	     313 allocs/op
+BenchmarkRead/postgres/check/direct-denied/atomicfga-pgx-in-tx-8         	    7381	    160657 ns/op	         1.000 stmts/op	         1.000 trips/op	   20103 B/op	     302 allocs/op
+BenchmarkRead/postgres/check/computed/openfga-8                          	    2910	    414986 ns/op	         7.000 stmts/op	  116864 B/op	    1895 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-tx-8                     	    1033	   1177407 ns/op	         6.364 stmts/op	         6.364 trips/op	  132816 B/op	    2102 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-in-tx-8                  	    1258	    971965 ns/op	         6.409 stmts/op	         6.409 trips/op	  131414 B/op	    2085 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-tx-8                 	    1956	    608177 ns/op	         7.000 stmts/op	         2.010 trips/op	  132896 B/op	    2082 allocs/op
+BenchmarkRead/postgres/check/computed/atomicfga-pgx-in-tx-8              	    3158	    383760 ns/op	         7.000 stmts/op	         2.013 trips/op	  133482 B/op	    2071 allocs/op
+BenchmarkRead/postgres/check/nested-groups/openfga-8                     	     673	   1745796 ns/op	        16.00 stmts/op	  270205 B/op	    4107 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-tx-8                	     441	   2757440 ns/op	        16.00 stmts/op	        16.00 trips/op	  313633 B/op	    4753 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-in-tx-8             	     482	   2462017 ns/op	        16.00 stmts/op	        16.00 trips/op	  310622 B/op	    4734 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-tx-8            	     586	   2036512 ns/op	        16.00 stmts/op	        11.00 trips/op	  298179 B/op	    4480 allocs/op
+BenchmarkRead/postgres/check/nested-groups/atomicfga-pgx-in-tx-8         	     666	   1836547 ns/op	        16.00 stmts/op	        11.01 trips/op	  300103 B/op	    4469 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/openfga-8                   	     430	   2846713 ns/op	        37.00 stmts/op	  647371 B/op	   10110 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-tx-8              	     222	   5350087 ns/op	        35.55 stmts/op	        35.55 trips/op	  730235 B/op	   11351 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-in-tx-8           	     232	   5181869 ns/op	        35.55 stmts/op	        35.55 trips/op	  730248 B/op	   11332 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-tx-8          	     316	   3786227 ns/op	        37.00 stmts/op	        22.00 trips/op	  711758 B/op	   11129 allocs/op
+BenchmarkRead/postgres/check/folder-depth-10/atomicfga-pgx-in-tx-8       	     340	   3597520 ns/op	        37.00 stmts/op	        22.02 trips/op	  713895 B/op	   11118 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/openfga-8                   	    2521	    472459 ns/op	         8.000 stmts/op	  132184 B/op	    2036 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-tx-8              	     858	   1415485 ns/op	         7.988 stmts/op	         7.988 trips/op	  157025 B/op	    2321 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-in-tx-8           	    1018	   1175483 ns/op	         7.993 stmts/op	         7.993 trips/op	  154918 B/op	    2300 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-tx-8          	    1965	    611617 ns/op	         8.000 stmts/op	         2.045 trips/op	  154916 B/op	    2279 allocs/op
+BenchmarkRead/postgres/check/wide-union-last/atomicfga-pgx-in-tx-8       	    3120	    392530 ns/op	         8.000 stmts/op	         2.051 trips/op	  154823 B/op	    2268 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/openfga-8                 	    2503	    499387 ns/op	         8.000 stmts/op	  131818 B/op	    2024 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-tx-8            	     843	   1411991 ns/op	         8.000 stmts/op	         8.000 trips/op	  152943 B/op	    2284 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-in-tx-8         	    1017	   1177017 ns/op	         8.000 stmts/op	         8.000 trips/op	  154724 B/op	    2270 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-tx-8        	    1965	    622908 ns/op	         8.000 stmts/op	         2.045 trips/op	  153738 B/op	    2260 allocs/op
+BenchmarkRead/postgres/check/wide-union-denied/atomicfga-pgx-in-tx-8     	    3128	    383127 ns/op	         8.000 stmts/op	         2.050 trips/op	  154232 B/op	    2250 allocs/op
+BenchmarkRead/postgres/check/intersection/openfga-8                      	    2298	    545358 ns/op	        10.00 stmts/op	  179266 B/op	    2865 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-tx-8                 	     734	   1628069 ns/op	         9.475 stmts/op	         9.475 trips/op	  201701 B/op	    3173 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-in-tx-8              	     846	   1430596 ns/op	         9.519 stmts/op	         9.519 trips/op	  201037 B/op	    3157 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-tx-8             	    1752	    683727 ns/op	        10.00 stmts/op	         2.025 trips/op	  202904 B/op	    3129 allocs/op
+BenchmarkRead/postgres/check/intersection/atomicfga-pgx-in-tx-8          	    2671	    455909 ns/op	        10.00 stmts/op	         2.023 trips/op	  201272 B/op	    3119 allocs/op
+BenchmarkRead/postgres/check/exclusion/openfga-8                         	    2872	    403861 ns/op	         7.965 stmts/op	  141316 B/op	    2265 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-tx-8                    	    2028	    604287 ns/op	         1.983 stmts/op	         1.983 trips/op	  152100 B/op	    2390 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-in-tx-8                 	    3256	    363747 ns/op	         1.988 stmts/op	         1.988 trips/op	  149706 B/op	    2372 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-tx-8                	    1848	    628221 ns/op	         7.994 stmts/op	         2.026 trips/op	  160279 B/op	    2486 allocs/op
+BenchmarkRead/postgres/check/exclusion/atomicfga-pgx-in-tx-8             	    3024	    394999 ns/op	         7.998 stmts/op	         2.021 trips/op	  161245 B/op	    2477 allocs/op
+BenchmarkRead/postgres/check/condition/openfga-8                         	    7290	    158427 ns/op	         1.000 stmts/op	   21291 B/op	     334 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-tx-8                    	    3033	    411427 ns/op	         1.000 stmts/op	         1.000 trips/op	   25149 B/op	     402 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-in-tx-8                 	    6768	    176825 ns/op	         1.000 stmts/op	         1.000 trips/op	   24343 B/op	     385 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-tx-8                	    3003	    396486 ns/op	         1.000 stmts/op	         1.000 trips/op	   23714 B/op	     372 allocs/op
+BenchmarkRead/postgres/check/condition/atomicfga-pgx-in-tx-8             	    7198	    177677 ns/op	         1.000 stmts/op	         1.000 trips/op	   23072 B/op	     361 allocs/op
+BenchmarkRead/postgres/batch-check/25/openfga-8                          	     152	   7817803 ns/op	       175.0 stmts/op	 2939957 B/op	   46771 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-tx-8                     	      45	  25103431 ns/op	       174.4 stmts/op	       174.4 trips/op	 3277460 B/op	   50842 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-in-tx-8                  	      46	  24858332 ns/op	       174.2 stmts/op	       174.2 trips/op	 3293104 B/op	   50883 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-tx-8                 	     396	   3092755 ns/op	       175.0 stmts/op	         3.851 trips/op	 3349870 B/op	   50341 allocs/op
+BenchmarkRead/postgres/batch-check/25/atomicfga-pgx-in-tx-8              	     423	   2880437 ns/op	       175.0 stmts/op	         4.002 trips/op	 3349212 B/op	   50317 allocs/op
+BenchmarkRead/postgres/list-objects/1000/openfga-8                       	     349	   3418884 ns/op	         9.000 stmts/op	 4593391 B/op	  100705 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-tx-8                  	     243	   4910280 ns/op	         9.000 stmts/op	         9.000 trips/op	 4941799 B/op	  109000 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-in-tx-8               	     260	   4592695 ns/op	         9.000 stmts/op	         9.000 trips/op	 4940537 B/op	  108985 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-tx-8              	     284	   4359544 ns/op	         9.000 stmts/op	         4.000 trips/op	 5118860 B/op	  111940 allocs/op
+BenchmarkRead/postgres/list-objects/1000/atomicfga-pgx-in-tx-8           	     301	   3980769 ns/op	         9.000 stmts/op	         4.000 trips/op	 5118401 B/op	  111930 allocs/op
+BenchmarkRead/postgres/list-users/200/openfga-8                          	    1642	    728216 ns/op	         4.000 stmts/op	  554313 B/op	    6581 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-tx-8                     	     968	   1190240 ns/op	         4.000 stmts/op	         4.000 trips/op	  631324 B/op	    8327 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-in-tx-8                  	    1263	    952436 ns/op	         4.000 stmts/op	         4.000 trips/op	  630293 B/op	    8310 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-tx-8                 	    1052	   1192330 ns/op	         4.000 stmts/op	         2.000 trips/op	  665459 B/op	    8893 allocs/op
+BenchmarkRead/postgres/list-users/200/atomicfga-pgx-in-tx-8              	    1276	    944235 ns/op	         4.000 stmts/op	         2.001 trips/op	  665781 B/op	    8883 allocs/op
+BenchmarkRead/mysql/check/direct/openfga-8                               	    3568	    295770 ns/op	         1.000 stmts/op	   20106 B/op	     321 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-tx-8                          	    2115	    549436 ns/op	         1.000 stmts/op	         1.000 trips/op	   22843 B/op	     375 allocs/op
+BenchmarkRead/mysql/check/direct/atomicfga-in-tx-8                       	    3794	    317037 ns/op	         1.000 stmts/op	         1.000 trips/op	   21615 B/op	     354 allocs/op
+BenchmarkRead/mysql/check/direct-denied/openfga-8                        	    4078	    294967 ns/op	         1.000 stmts/op	   19472 B/op	     304 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-tx-8                   	    2198	    541225 ns/op	         1.000 stmts/op	         1.000 trips/op	   22164 B/op	     348 allocs/op
+BenchmarkRead/mysql/check/direct-denied/atomicfga-in-tx-8                	    3902	    307574 ns/op	         1.000 stmts/op	         1.000 trips/op	   21183 B/op	     326 allocs/op
+BenchmarkRead/mysql/check/computed/openfga-8                             	    1412	    846866 ns/op	         7.000 stmts/op	  123990 B/op	    2036 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-tx-8                        	     542	   2222259 ns/op	         6.648 stmts/op	         6.648 trips/op	  134360 B/op	    2169 allocs/op
+BenchmarkRead/mysql/check/computed/atomicfga-in-tx-8                     	     614	   1961622 ns/op	         6.668 stmts/op	         6.668 trips/op	  132367 B/op	    2149 allocs/op
+BenchmarkRead/mysql/check/nested-groups/openfga-8                        	     342	   3657571 ns/op	        16.00 stmts/op	  283501 B/op	    4437 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-tx-8                   	     234	   5281285 ns/op	        16.00 stmts/op	        16.00 trips/op	  313808 B/op	    4858 allocs/op
+BenchmarkRead/mysql/check/nested-groups/atomicfga-in-tx-8                	     243	   5021761 ns/op	        16.00 stmts/op	        16.00 trips/op	  312315 B/op	    4837 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/openfga-8                      	     208	   5743257 ns/op	        37.00 stmts/op	  674129 B/op	   10835 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-tx-8                 	     100	  10912559 ns/op	        35.73 stmts/op	        35.73 trips/op	  731665 B/op	   11604 allocs/op
+BenchmarkRead/mysql/check/folder-depth-10/atomicfga-in-tx-8              	     100	  10711292 ns/op	        35.65 stmts/op	        35.65 trips/op	  732601 B/op	   11576 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/openfga-8                      	    1095	    927274 ns/op	         8.000 stmts/op	  141413 B/op	    2214 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-tx-8                 	     466	   2561757 ns/op	         7.989 stmts/op	         7.989 trips/op	  156846 B/op	    2407 allocs/op
+BenchmarkRead/mysql/check/wide-union-last/atomicfga-in-tx-8              	     513	   2312731 ns/op	         7.994 stmts/op	         7.994 trips/op	  155848 B/op	    2381 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/openfga-8                    	    1232	    988916 ns/op	         8.000 stmts/op	  142434 B/op	    2203 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-tx-8               	     469	   2603457 ns/op	         8.000 stmts/op	         8.000 trips/op	  155866 B/op	    2376 allocs/op
+BenchmarkRead/mysql/check/wide-union-denied/atomicfga-in-tx-8            	     518	   2319310 ns/op	         8.000 stmts/op	         8.000 trips/op	  155655 B/op	    2358 allocs/op
+BenchmarkRead/mysql/check/intersection/openfga-8                         	    1108	   1095660 ns/op	        10.00 stmts/op	  189918 B/op	    3074 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-tx-8                    	     391	   3064868 ns/op	         9.506 stmts/op	         9.506 trips/op	  202967 B/op	    3263 allocs/op
+BenchmarkRead/mysql/check/intersection/atomicfga-in-tx-8                 	     434	   2844805 ns/op	         9.495 stmts/op	         9.495 trips/op	  202455 B/op	    3242 allocs/op
+BenchmarkRead/mysql/check/exclusion/openfga-8                            	    1443	    869174 ns/op	         7.999 stmts/op	  149389 B/op	    2426 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-tx-8                       	    1340	    889270 ns/op	         1.986 stmts/op	         1.986 trips/op	  146566 B/op	    2361 allocs/op
+BenchmarkRead/mysql/check/exclusion/atomicfga-in-tx-8                    	    1819	    666885 ns/op	         1.990 stmts/op	         1.990 trips/op	  145271 B/op	    2340 allocs/op
+BenchmarkRead/mysql/check/condition/openfga-8                            	    3946	    308736 ns/op	         1.000 stmts/op	   23183 B/op	     368 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-tx-8                       	    2218	    550157 ns/op	         1.000 stmts/op	         1.000 trips/op	   25568 B/op	     416 allocs/op
+BenchmarkRead/mysql/check/condition/atomicfga-in-tx-8                    	    3798	    324615 ns/op	         1.000 stmts/op	         1.000 trips/op	   24434 B/op	     394 allocs/op
+BenchmarkRead/mysql/batch-check/25/openfga-8                             	      64	  17917484 ns/op	       175.0 stmts/op	 3111519 B/op	   50235 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-tx-8                        	      22	  51305934 ns/op	       174.5 stmts/op	       174.5 trips/op	 3315163 B/op	   52624 allocs/op
+BenchmarkRead/mysql/batch-check/25/atomicfga-in-tx-8                     	      18	  69481387 ns/op	       174.4 stmts/op	       174.4 trips/op	 3318537 B/op	   52571 allocs/op
+BenchmarkRead/mysql/list-objects/1000/openfga-8                          	     207	   5668978 ns/op	         9.000 stmts/op	 4784508 B/op	  108853 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-tx-8                     	     160	   7259813 ns/op	         9.000 stmts/op	         9.000 trips/op	 5280589 B/op	  123054 allocs/op
+BenchmarkRead/mysql/list-objects/1000/atomicfga-in-tx-8                  	     180	   6660137 ns/op	         9.000 stmts/op	         9.000 trips/op	 5276779 B/op	  123030 allocs/op
+BenchmarkRead/mysql/list-users/200/openfga-8                             	    1100	   1261311 ns/op	         4.000 stmts/op	  594316 B/op	    8244 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-tx-8                        	     576	   1844515 ns/op	         4.000 stmts/op	         4.000 trips/op	  698208 B/op	   11143 allocs/op
+BenchmarkRead/mysql/list-users/200/atomicfga-in-tx-8                     	     783	   1535931 ns/op	         4.000 stmts/op	         4.000 trips/op	  697289 B/op	   11122 allocs/op
+BenchmarkWrite/sqlite/write/tuple/openfga-8                              	    5180	    229995 ns/op	   90298 B/op	    1175 allocs/op
+BenchmarkWrite/sqlite/write/tuple/atomicfga-tx-8                         	    5109	    234500 ns/op	         5.000 stmts/op	   94463 B/op	    1240 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/openfga-8                 	    3976	    295836 ns/op	   90778 B/op	    1187 allocs/op
+BenchmarkWrite/sqlite/write/tuple-with-app-row/atomicfga-tx-8            	    4980	    240837 ns/op	         5.000 stmts/op	   94538 B/op	    1244 allocs/op
+BenchmarkWrite/postgres/write/tuple/openfga-8                            	    1586	    646678 ns/op	   87613 B/op	    1137 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-tx-8                       	    1407	    852051 ns/op	         5.000 stmts/op	   94447 B/op	    1231 allocs/op
+BenchmarkWrite/postgres/write/tuple/atomicfga-pgx-tx-8                   	    1431	    830713 ns/op	         5.000 stmts/op	   91666 B/op	    1191 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/openfga-8               	    1165	   1039244 ns/op	   88212 B/op	    1151 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-tx-8          	    1285	    937126 ns/op	         5.000 stmts/op	   94509 B/op	    1235 allocs/op
+BenchmarkWrite/postgres/write/tuple-with-app-row/atomicfga-pgx-tx-8      	    1131	    931549 ns/op	         5.000 stmts/op	   91689 B/op	    1192 allocs/op
+BenchmarkWrite/mysql/write/tuple/openfga-8                               	     810	   1583399 ns/op	   90261 B/op	    1162 allocs/op
+BenchmarkWrite/mysql/write/tuple/atomicfga-tx-8                          	     656	   1885088 ns/op	         5.000 stmts/op	   94082 B/op	    1228 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/openfga-8                  	     518	   2655751 ns/op	   90838 B/op	    1181 allocs/op
+BenchmarkWrite/mysql/write/tuple-with-app-row/atomicfga-tx-8             	     591	   2065040 ns/op	         5.000 stmts/op	   94298 B/op	    1234 allocs/op
+PASS
+ok  	github.com/memoremix-ing/atomicfga/bench	190.492s

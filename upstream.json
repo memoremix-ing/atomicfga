@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/openfga/openfga",
+  "workspace": "../../../openfga/openfga.git/lts-1",
+  "trackingBranch": "lts-1",
+  "testedCommit": "22c4d5ddf4d5969bee10c24e468a5acfbcf26837"
+}
