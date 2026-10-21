@@ -23,18 +23,12 @@ type variant struct {
 	isolation sql.IsolationLevel
 }
 
-// variants lists every dialect and transaction kind. MySQL runs both at its
-// default REPEATABLE READ, where concurrent tuple writes deadlock on gap
-// locks and are retried, and at READ COMMITTED, which OpenFGA itself uses
-// for its write transactions.
+// variants lists every dialect and transaction kind.
 func variants() []variant {
 	var vs []variant
 	for _, d := range testdb.Dialects() {
 		for _, b := range testdb.Backends(d) {
 			vs = append(vs, variant{name: fmt.Sprintf("%s/%s", d, b), dialect: d, pgx: b.Pgx})
-		}
-		if d == atomicfga.MySQL {
-			vs = append(vs, variant{name: "mysql/sql-read-committed", dialect: d, isolation: sql.LevelReadCommitted})
 		}
 	}
 	return vs

@@ -24,7 +24,6 @@ import (
 
 	"github.com/openfga/openfga/pkg/server"
 	"github.com/openfga/openfga/pkg/storage"
-	"github.com/openfga/openfga/pkg/storage/mysql"
 	"github.com/openfga/openfga/pkg/storage/postgres"
 	"github.com/openfga/openfga/pkg/storage/sqlcommon"
 	"github.com/openfga/openfga/pkg/storage/sqlite"
@@ -101,7 +100,7 @@ func dialects() []atomicfga.Dialect {
 	if os.Getenv("ATOMICFGA_DIALECTS") != "" {
 		return testdb.Dialects()
 	}
-	return []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Postgres, atomicfga.MySQL}
+	return []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso, atomicfga.Postgres}
 }
 
 func openUpstream(d atomicfga.Dialect, uri string) (storage.OpenFGADatastore, error) {
@@ -109,8 +108,6 @@ func openUpstream(d atomicfga.Dialect, uri string) (storage.OpenFGADatastore, er
 	switch d {
 	case atomicfga.Postgres:
 		return postgres.New(uri, cfg)
-	case atomicfga.MySQL:
-		return mysql.New(uri, cfg)
 	default:
 		return sqlite.New(uri, cfg)
 	}
@@ -119,7 +116,7 @@ func openUpstream(d atomicfga.Dialect, uri string) (storage.OpenFGADatastore, er
 func load(ctx context.Context, a api, store, model string) error {
 	ts := dataset()
 	for len(ts) > 0 {
-		n := min(len(ts), 100)
+		n := min(len(ts), 50) // within every engine's write limit (Turso: 64)
 		if _, err := a.Write(ctx, &openfgav1.WriteRequest{StoreId: store, AuthorizationModelId: model, Writes: &openfgav1.WriteRequestWrites{TupleKeys: ts[:n]}}); err != nil {
 			return err
 		}
@@ -153,8 +150,13 @@ func getEnvT(b testing.TB, d atomicfga.Dialect) *env {
 	ctx := context.Background()
 	tb := &keepAlive{TB: b}
 
-	odb := testdb.Open(tb, d)
-	ds, err := atomicfga.Construct(func() (storage.OpenFGADatastore, error) { return openUpstream(d, odb.URI) })
+	// Upstream has no Turso datastore; its SQLite one is the baseline.
+	od := d
+	if d == atomicfga.Turso {
+		od = atomicfga.SQLite
+	}
+	odb := testdb.Open(tb, od)
+	ds, err := atomicfga.Construct(func() (storage.OpenFGADatastore, error) { return openUpstream(od, odb.URI) })
 	if err != nil {
 		b.Fatal(err)
 	}

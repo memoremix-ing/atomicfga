@@ -94,9 +94,9 @@ func (s *Session) Aborted() error {
 	return nil
 }
 
-// observe records an error that aborted the whole transaction. MySQL, for
-// example, rolls back a deadlocked transaction and leaves the connection in
-// autocommit mode; later statements must not run there.
+// observe records an error that aborted the whole transaction. Later
+// statements must not run: PostgreSQL would reject them, and a database that
+// rolled the transaction back would run them outside it.
 func (s *Session) observe(err error) error {
 	if err != nil && abortsTransaction(err) {
 		a := &abortError{err}

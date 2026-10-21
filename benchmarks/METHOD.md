@@ -3,8 +3,9 @@
 `bench/` runs the same operations against two implementations, per dialect:
 
 - **OpenFGA**: upstream's server with upstream's pooled SQL datastore
-  (`postgres.New`, `mysql.New`, `sqlite.New`), on its own database, opening
-  its own connections and committing each write in its own transaction.
+  (`postgres.New`, `sqlite.New`), on its own database, opening its own
+  connections and committing each write in its own transaction. Upstream has
+  no Turso datastore, so the Turso baseline is upstream on SQLite.
 - **atomicfga**: the same server code inside application transactions, on a
   second database of the same dialect.
 
@@ -27,9 +28,10 @@ Metrics: `ns/op` (median of runs), `q` = SQL statements per operation
 (counted at the datastore for OpenFGA, at the transaction for atomicfga),
 `rt` = round trips when pgx pipelining merged statements.
 
-Environment: Apple M2 (8 cores), Go 1.27.1, PostgreSQL 17 and MySQL 8.4 in a
-podman VM (libkrun) on the same machine, with default (durable) settings, and
-SQLite through modernc.org/sqlite in WAL mode. Round trips through the VM's
+Environment: Apple M2 (8 cores), Go 1.27.1, PostgreSQL 17 in a podman VM
+(libkrun) on the same machine with default (durable) settings, SQLite through
+modernc.org/sqlite in WAL mode, and Turso through turso.tech/database/tursogo
+v0.8.3 (write transactions `BEGIN IMMEDIATE`). Round trips through the VM's
 port forwarding cost roughly 50–100 µs, which is comparable to a same-zone
 network. These are microbenchmarks of single operations on one machine; they
 compare the two implementations, not the databases.

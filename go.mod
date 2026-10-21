@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
-	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/oklog/ulid/v2 v2.1.2
 	github.com/openfga/api/proto v0.0.0-20260319214821-f153694bfc20
@@ -15,7 +14,9 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
+	hegel.dev/go/hegel v0.9.27
 	modernc.org/sqlite v1.60.1
+	turso.tech/database/tursogo v0.8.3
 )
 
 require (
@@ -61,6 +62,7 @@ require (
 	github.com/go-openapi/swag/stringutils v0.29.2 // indirect
 	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.2 // indirect
+	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/cel-go v0.31.0 // indirect
@@ -111,6 +113,7 @@ require (
 	github.com/spf13/viper v1.20.1 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/tursodatabase/turso-go-platform-libs v0.8.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -141,7 +144,6 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	hegel.dev/go/hegel v0.9.27 // indirect
 	k8s.io/api v0.37.0 // indirect
 	k8s.io/apimachinery v0.37.0 // indirect
 	k8s.io/client-go v0.37.0 // indirect

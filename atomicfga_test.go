@@ -232,8 +232,8 @@ func TestApplicationSavepointsNestAroundOperations(t *testing.T) {
 
 func TestUncommittedModelsAndTuplesStayIsolated(t *testing.T) {
 	each(t, func(t *testing.T, db *testdb.DB, pgx bool) {
-		if db.Dialect == atomicfga.SQLite {
-			t.Skip("SQLite allows a single writer; isolation is covered by the readers below")
+		if db.Dialect != atomicfga.Postgres {
+			t.Skip("one writer at a time; isolation is covered by Hegel's concurrent reader")
 		}
 		f := newFixture(t, db, pgx)
 		writer, _, _, rollback := f.begin()

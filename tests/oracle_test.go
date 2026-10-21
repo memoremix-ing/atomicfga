@@ -15,7 +15,6 @@ import (
 
 	"github.com/openfga/openfga/pkg/server"
 	"github.com/openfga/openfga/pkg/storage"
-	"github.com/openfga/openfga/pkg/storage/mysql"
 	"github.com/openfga/openfga/pkg/storage/postgres"
 	"github.com/openfga/openfga/pkg/storage/sqlcommon"
 	"github.com/openfga/openfga/pkg/storage/sqlite"
@@ -30,6 +29,10 @@ import (
 // transactions. It is the reference implementation for differential tests.
 func newOracle(t testing.TB, d atomicfga.Dialect, opts ...server.OpenFGAServiceV1Option) *server.Server {
 	t.Helper()
+	if d == atomicfga.Turso {
+		// Upstream has no Turso datastore; its SQLite one is the reference.
+		d = atomicfga.SQLite
+	}
 	db := testdb.Open(t, d)
 	ds, err := atomicfga.Construct(func() (storage.OpenFGADatastore, error) {
 		return OpenUpstream(d, db.URI)
@@ -51,8 +54,6 @@ func OpenUpstream(d atomicfga.Dialect, uri string) (storage.OpenFGADatastore, er
 	switch d {
 	case atomicfga.Postgres:
 		return postgres.New(uri, cfg)
-	case atomicfga.MySQL:
-		return mysql.New(uri, cfg)
 	case atomicfga.SQLite:
 		return sqlite.New(uri, cfg)
 	}

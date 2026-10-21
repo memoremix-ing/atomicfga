@@ -29,6 +29,9 @@ func TestUpstreamDatastoreSuite(t *testing.T) {
 				db := testdb.Open(t, d)
 				storagetest.RunAllTests(t, newAutocommit(t, db, b.Pgx))
 
+				if d == atomicfga.Turso {
+					return // at most 90 tuples per write; see atomicfga.New
+				}
 				custom := newAutocommit(t, db, b.Pgx, sqlcommon.WithMaxTuplesPerWrite(5000))
 				t.Run("WriteTuplesWithMaxTuplesPerWrite", storagetest.WriteTuplesWithMaxTuplesPerWrite(custom, context.Background()))
 			})

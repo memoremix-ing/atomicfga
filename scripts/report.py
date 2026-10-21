@@ -54,8 +54,12 @@ for key in order:
 
 for (kind, dialect), keys in groups.items():
     modes = [m for m in MODES if any(m in rows[k] for k in keys)]
+    if 'openfga' not in modes:
+        continue  # e.g. BenchmarkRawQuery: no OpenFGA baseline
     print(f"### {kind} — {dialect}\n")
-    print("| operation | " + " | ".join(TITLES[m] for m in modes) + " |")
+    # Upstream has no Turso datastore: its baseline is OpenFGA on SQLite.
+    titles = [TITLES[m] + (" (on SQLite)" if m == 'openfga' and dialect == 'turso' else '') for m in modes]
+    print("| operation | " + " | ".join(titles) + " |")
     print("|---|" + "---:|" * len(modes))
     for key in keys:
         base = med(rows[key].get('openfga', []), 'ns/op')

@@ -1,10 +1,14 @@
 # Benchmark results
 
-atomicfga against the original OpenFGA, on SQLite, PostgreSQL 17 and MySQL
-8.4. See [METHOD.md](METHOD.md) for the setup. Both implementations returned
+atomicfga against the original OpenFGA, on SQLite, Turso and PostgreSQL 17.
+See [METHOD.md](METHOD.md) for the setup. Both implementations returned
 identical results for every benchmarked operation before it was timed.
 Sequential tables are medians of three independent runs, parallel tables of
 two. Raw `go test -bench` output is in [results/](results/).
+
+Upstream OpenFGA has no Turso datastore, so the Turso tables compare with
+the original on SQLite: they combine atomicfga's cost with the Turso
+engine's.
 
 ## Findings
 
@@ -15,11 +19,11 @@ inverting transaction ownership, and it scales with fan-out, not data size:
 
 | PostgreSQL, in tx | queries | `database/sql` | pgx (pipelined) |
 |---|---:|---:|---:|
-| direct check | 1 | 1.08× | 1.01× |
-| 8-way union | 8 | 2.49× | **0.82×** (2 round trips) |
-| intersection | 10 | 2.57× | **0.84×** (2 round trips) |
-| BatchCheck of 25 | 175 | 3.40× | **0.39×** (4 round trips) |
-| 10-level tuple-to-userset recursion | 37 | 1.86× | 1.28× (22 round trips) |
+| direct check | 1 | 1.07× | 1.01× |
+| 8-way union | 8 | 2.51× | **0.84×** (2 round trips) |
+| intersection | 10 | 2.58× | **0.83×** (2 round trips) |
+| BatchCheck of 25 | 175 | 3.31× | **0.38×** (4 round trips) |
+| 10-level tuple-to-userset recursion | 37 | 1.84× | 1.28× (22 round trips) |
 
 **Mitigations that are in place:**
 
@@ -32,49 +36,57 @@ inverting transaction ownership, and it scales with fan-out, not data size:
    difference, so it was removed.
 2. *Dropping abandoned branches.* When a branch decides a union, intersection
    or exclusion, queued queries of the cancelled branches never reach the
-   database. Exclusion issues 2 queries instead of upstream's 7–8 (0.26× on
-   SQLite, 0.77× on MySQL, 0.91× on PostgreSQL `database/sql`). Pipelined
-   pgx batches are already sent, so they do not benefit.
+   database. Exclusion issues 2 queries instead of upstream's 7–8 (0.27× on
+   SQLite, 0.35× on Turso, 0.90× on PostgreSQL `database/sql`). Pipelined pgx
+   batches are already sent, so they do not benefit.
 3. *Model resolution without queries.* After the first sighting of a
    committed model, pinning a request to a visible model costs nothing.
-   Single-query checks inside a transaction are within 1–9% of upstream on
-   PostgreSQL and MySQL (12–15% on SQLite, see below).
+   Single-query checks inside a transaction are within 1–10% of upstream on
+   PostgreSQL (13–15% on SQLite, see below).
 
 **What remains slower, and when it matters:**
 
-- `database/sql` on PostgreSQL and MySQL cannot pipeline. Fan-out checks run
-  2.3–3.4× slower than upstream. On PostgreSQL use pgx transactions. MySQL
-  has no equivalent without multi-statement DSN flags, which atomicfga does
-  not require.
+- `database/sql` on PostgreSQL cannot pipeline. Fan-out checks run 2.3–3.3×
+  slower than upstream there. Use pgx transactions.
 - A transaction opened *only* to check costs the database two extra round
   trips (`BEGIN`, `ROLLBACK`): 2.5× for a single-query check on PostgreSQL,
   and under load the request holds its connection for those round trips
   (~3× throughput cost for the cheapest checks). The design assumes the
   request already has a transaction for its own work, which is the "in tx"
   column.
-- ListObjects is 1.2–1.4× slower, and ListUsers 1.3–1.4× on PostgreSQL and
-  MySQL. Results are buffered so the connection is free for the next
-  statement, and upstream's reverse expansion reads in parallel.
+- ListObjects and ListUsers are 1.2–1.4× slower on PostgreSQL and SQLite.
+  Results are buffered so the connection is free for the next statement, and
+  upstream's reverse expansion reads in parallel.
 
 **Writes.** A tuple write inside a transaction is a savepoint around
 upstream's statements: `SAVEPOINT`, `SELECT … FOR UPDATE`, the `INSERT`s or
-`DELETE`s, `RELEASE`. Committing *only* a tuple is 1.2–1.3× upstream on
-PostgreSQL and MySQL (two more round trips), and at parity on SQLite. Writing a tuple **together with an application row** is
-what atomicfga is for. Upstream needs two transactions and two commits for
-that, and the pair is not atomic. atomicfga does it in one: **0.80–0.95×**
-upstream's time, and atomic.
+`DELETE`s, `RELEASE`. Committing *only* a tuple is 1.26–1.29× upstream on
+PostgreSQL (two more round trips), and at parity on SQLite. Writing a tuple
+**together with an application row** is what atomicfga is for. Upstream needs
+two transactions and two commits for that, and the pair is not atomic.
+atomicfga does it in one: **0.82–0.91×** upstream's time on SQLite and
+PostgreSQL, and atomic.
 
-**SQLite** is in-process, so serialization costs no round trips. Every
-check that issues several queries is as fast or faster than upstream
-(0.26–1.01×); single-query checks are 12–15% slower. The pooled original
-contends between its connections, so under 16 concurrent callers atomicfga
-sustains 1.2–7× the throughput. The exception is ListObjects (1.4×
-sequentially), whose parallel reads upstream spreads over several
-connections.
+**SQLite** is in-process, so serialization costs no round trips. Checks that
+issue several queries are within 5% of upstream or faster (0.27–1.05×); single-query checks are 13–15% slower, the loopback layer's
+overhead (routing, buffering, conversion through `database/sql` twice) where
+the database is fastest. Under 16 concurrent callers atomicfga sustains
+1.1–7× the throughput of the pooled original, whose connections contend.
 
-**Overhead of the loopback layer** itself (routing, buffering, conversion
-through `database/sql` twice) is visible only where the database is fastest:
-+10 µs (12%) for a single-query check on SQLite.
+**Turso** runs the same SQLite datastore through `turso.tech/database/tursogo`.
+
+- The engine itself is slower than modernc SQLite for OpenFGA's statements: a
+  raw indexed point lookup takes 82 µs against SQLite's 48 µs, so
+  single-query checks are 1.4–1.6× upstream-on-SQLite. Row-heavy reads pay
+  per row (ListObjects 2.8×, ListUsers 2.5×), and tuple writes take 3×.
+- Checks that issue many queries still gain from dropped branches (exclusion
+  0.35×, BatchCheck 0.65×). Under 16 concurrent callers, Turso checks sustain
+  1.7–9× the throughput of the original on SQLite.
+- **Pitfall found and fixed:** without planner statistics, Turso answered
+  every point lookup by scanning the store's tuples through the `(store,
+  ulid)` index: 370 µs per lookup instead of 82 µs on this dataset, growing
+  with the store. `Migrate` now seeds `sqlite_stat1`; see the
+  [design notes](../docs/design.md#turso).
 
 ## Sequential (one caller)
 
@@ -82,76 +94,76 @@ through `database/sql` twice) is visible only where the database is fastest:
 
 | operation | OpenFGA | atomicfga, in tx | atomicfga, tx per op |
 |---|---:|---:|---:|
-| check/direct | 85 µs<br>1.0 q | 95 µs (1.12×)<br>1.0 q | 98 µs (1.15×)<br>1.0 q |
-| check/direct-denied | 82 µs<br>1.0 q | 93 µs (1.13×)<br>1.0 q | 94 µs (1.14×)<br>1.0 q |
-| check/computed | 487 µs<br>7.0 q | 392 µs (0.81×)<br>6.2 q | 397 µs (0.82×)<br>6.2 q |
-| check/nested-groups | 1.15 ms<br>16.0 q | 1.15 ms (1.00×)<br>16.0 q | 1.16 ms (1.01×)<br>16.0 q |
-| check/folder-depth-10 | 1.97 ms<br>36.9 q | 1.97 ms (1.00×)<br>35.8 q | 1.99 ms (1.01×)<br>35.8 q |
-| check/wide-union-last | 590 µs<br>8.0 q | 544 µs (0.92×)<br>8.0 q | 550 µs (0.93×)<br>8.0 q |
-| check/wide-union-denied | 572 µs<br>8.0 q | 539 µs (0.94×)<br>8.0 q | 549 µs (0.96×)<br>8.0 q |
-| check/intersection | 971 µs<br>10.0 q | 606 µs (0.62×)<br>9.1 q | 607 µs (0.63×)<br>9.1 q |
-| check/exclusion | 685 µs<br>7.2 q | 179 µs (0.26×)<br>2.0 q | 186 µs (0.27×)<br>2.0 q |
-| check/condition | 88 µs<br>1.0 q | 100 µs (1.14×)<br>1.0 q | 105 µs (1.20×)<br>1.0 q |
-| batch-check/25 | 24.25 ms<br>175.0 q | 10.37 ms (0.43×)<br>174.5 q | 10.35 ms (0.43×)<br>174.3 q |
-| list-objects/1000 | 4.42 ms<br>9.0 q | 6.22 ms (1.41×)<br>9.0 q | 6.18 ms (1.40×)<br>9.0 q |
-| list-users/200 | 883 µs<br>4.0 q | 807 µs (0.91×)<br>4.0 q | 820 µs (0.93×)<br>4.0 q |
+| check/direct | 84 µs<br>1.0 q | 95 µs (1.13×)<br>1.0 q | 97 µs (1.15×)<br>1.0 q |
+| check/direct-denied | 81 µs<br>1.0 q | 92 µs (1.14×)<br>1.0 q | 93 µs (1.15×)<br>1.0 q |
+| check/computed | 479 µs<br>7.0 q | 391 µs (0.82×)<br>6.2 q | 387 µs (0.81×)<br>6.1 q |
+| check/nested-groups | 1.14 ms<br>16.0 q | 1.14 ms (1.00×)<br>16.0 q | 1.16 ms (1.02×)<br>16.0 q |
+| check/folder-depth-10 | 1.91 ms<br>36.9 q | 1.97 ms (1.03×)<br>35.8 q | 2.00 ms (1.05×)<br>35.8 q |
+| check/wide-union-last | 560 µs<br>8.0 q | 537 µs (0.96×)<br>8.0 q | 545 µs (0.97×)<br>8.0 q |
+| check/wide-union-denied | 548 µs<br>8.0 q | 534 µs (0.97×)<br>8.0 q | 544 µs (0.99×)<br>8.0 q |
+| check/intersection | 898 µs<br>10.0 q | 583 µs (0.65×)<br>9.1 q | 594 µs (0.66×)<br>9.1 q |
+| check/exclusion | 659 µs<br>7.1 q | 179 µs (0.27×)<br>2.0 q | 184 µs (0.28×)<br>2.0 q |
+| check/condition | 88 µs<br>1.0 q | 99 µs (1.13×)<br>1.0 q | 105 µs (1.19×)<br>1.0 q |
+| batch-check/25 | 23.43 ms<br>175.0 q | 10.30 ms (0.44×)<br>174.3 q | 10.33 ms (0.44×)<br>174.4 q |
+| list-objects/1000 | 4.45 ms<br>9.0 q | 6.21 ms (1.39×)<br>9.0 q | 6.20 ms (1.39×)<br>9.0 q |
+| list-users/200 | 889 µs<br>4.0 q | 800 µs (0.90×)<br>4.0 q | 814 µs (0.91×)<br>4.0 q |
+
+### Read — turso
+
+| operation | OpenFGA (on SQLite) | atomicfga, in tx | atomicfga, tx per op |
+|---|---:|---:|---:|
+| check/direct | 85 µs<br>1.0 q | 126 µs (1.48×)<br>1.0 q | 135 µs (1.60×)<br>1.0 q |
+| check/direct-denied | 82 µs<br>1.0 q | 113 µs (1.37×)<br>1.0 q | 125 µs (1.52×)<br>1.0 q |
+| check/computed | 481 µs<br>7.0 q | 577 µs (1.20×)<br>6.2 q | 591 µs (1.23×)<br>6.2 q |
+| check/nested-groups | 1.14 ms<br>16.0 q | 1.74 ms (1.52×)<br>16.0 q | 1.76 ms (1.54×)<br>16.0 q |
+| check/folder-depth-10 | 1.94 ms<br>36.9 q | 3.29 ms (1.69×)<br>35.0 q | 3.30 ms (1.70×)<br>35.0 q |
+| check/wide-union-last | 558 µs<br>8.0 q | 725 µs (1.30×)<br>8.0 q | 737 µs (1.32×)<br>8.0 q |
+| check/wide-union-denied | 558 µs<br>8.0 q | 710 µs (1.27×)<br>8.0 q | 722 µs (1.29×)<br>8.0 q |
+| check/intersection | 953 µs<br>10.0 q | 856 µs (0.90×)<br>9.2 q | 871 µs (0.91×)<br>9.2 q |
+| check/exclusion | 682 µs<br>7.3 q | 235 µs (0.35×)<br>2.0 q | 249 µs (0.37×)<br>2.0 q |
+| check/condition | 88 µs<br>1.0 q | 129 µs (1.47×)<br>1.0 q | 139 µs (1.58×)<br>1.0 q |
+| batch-check/25 | 23.69 ms<br>175.0 q | 15.42 ms (0.65×)<br>174.2 q | 15.49 ms (0.65×)<br>174.4 q |
+| list-objects/1000 | 4.44 ms<br>9.0 q | 12.43 ms (2.80×)<br>9.0 q | 12.57 ms (2.83×)<br>9.0 q |
+| list-users/200 | 890 µs<br>4.0 q | 2.19 ms (2.46×)<br>4.0 q | 2.19 ms (2.47×)<br>4.0 q |
 
 ### Read — postgres
 
 | operation | OpenFGA | atomicfga, in tx | atomicfga, tx per op | pgx, in tx | pgx, tx per op |
 |---|---:|---:|---:|---:|---:|
-| check/direct | 160 µs<br>1.0 q | 174 µs (1.08×)<br>1.0 q | 405 µs (2.53×)<br>1.0 q | 162 µs (1.01×)<br>1.0 q | 391 µs (2.44×)<br>1.0 q |
-| check/direct-denied | 156 µs<br>1.0 q | 167 µs (1.07×)<br>1.0 q | 403 µs (2.58×)<br>1.0 q | 161 µs (1.03×)<br>1.0 q | 388 µs (2.48×)<br>1.0 q |
-| check/computed | 409 µs<br>7.0 q | 946 µs (2.31×)<br>6.4 q | 1.18 ms (2.88×)<br>6.4 q | 384 µs (0.94×)<br>7.0 q / 2.0 rt | 607 µs (1.48×)<br>7.0 q / 2.0 rt |
-| check/nested-groups | 1.75 ms<br>16.0 q | 2.46 ms (1.41×)<br>16.0 q | 2.70 ms (1.55×)<br>16.0 q | 1.84 ms (1.05×)<br>16.0 q / 11.0 rt | 2.03 ms (1.16×)<br>16.0 q / 11.0 rt |
-| check/folder-depth-10 | 2.79 ms<br>37.0 q | 5.18 ms (1.86×)<br>35.5 q | 5.35 ms (1.92×)<br>35.6 q | 3.56 ms (1.28×)<br>37.0 q / 22.0 rt | 3.79 ms (1.36×)<br>37.0 q / 22.0 rt |
-| check/wide-union-last | 472 µs<br>8.0 q | 1.18 ms (2.49×)<br>8.0 q | 1.42 ms (3.00×)<br>8.0 q | 385 µs (0.82×)<br>8.0 q / 2.1 rt | 615 µs (1.30×)<br>8.0 q / 2.0 rt |
-| check/wide-union-denied | 499 µs<br>8.0 q | 1.18 ms (2.36×)<br>8.0 q | 1.42 ms (2.83×)<br>8.0 q | 383 µs (0.77×)<br>8.0 q / 2.0 rt | 611 µs (1.22×)<br>8.0 q / 2.0 rt |
-| check/intersection | 545 µs<br>10.0 q | 1.40 ms (2.57×)<br>9.5 q | 1.64 ms (3.01×)<br>9.5 q | 456 µs (0.84×)<br>10.0 q / 2.0 rt | 689 µs (1.26×)<br>10.0 q / 2.0 rt |
-| check/exclusion | 402 µs<br>8.0 q | 364 µs (0.91×)<br>2.0 q | 609 µs (1.52×)<br>2.0 q | 395 µs (0.98×)<br>8.0 q / 2.0 rt | 636 µs (1.58×)<br>8.0 q / 2.0 rt |
-| check/condition | 163 µs<br>1.0 q | 178 µs (1.09×)<br>1.0 q | 411 µs (2.53×)<br>1.0 q | 167 µs (1.02×)<br>1.0 q | 398 µs (2.45×)<br>1.0 q |
-| batch-check/25 | 7.31 ms<br>175.0 q | 24.86 ms (3.40×)<br>174.3 q | 25.10 ms (3.43×)<br>174.4 q | 2.84 ms (0.39×)<br>175.0 q / 4.0 rt | 3.12 ms (0.43×)<br>175.0 q / 3.9 rt |
-| list-objects/1000 | 3.42 ms<br>9.0 q | 4.59 ms (1.34×)<br>9.0 q | 4.93 ms (1.44×)<br>9.0 q | 4.05 ms (1.19×)<br>9.0 q / 4.0 rt | 4.36 ms (1.28×)<br>9.0 q / 4.0 rt |
-| list-users/200 | 735 µs<br>4.0 q | 952 µs (1.30×)<br>4.0 q | 1.19 ms (1.62×)<br>4.0 q | 944 µs (1.29×)<br>4.0 q / 2.0 rt | 1.19 ms (1.62×)<br>4.0 q / 2.0 rt |
-
-### Read — mysql
-
-| operation | OpenFGA | atomicfga, in tx | atomicfga, tx per op |
-|---|---:|---:|---:|
-| check/direct | 296 µs<br>1.0 q | 313 µs (1.06×)<br>1.0 q | 549 µs (1.86×)<br>1.0 q |
-| check/direct-denied | 295 µs<br>1.0 q | 308 µs (1.04×)<br>1.0 q | 544 µs (1.85×)<br>1.0 q |
-| check/computed | 826 µs<br>7.0 q | 1.96 ms (2.38×)<br>6.7 q | 2.21 ms (2.68×)<br>6.6 q |
-| check/nested-groups | 3.59 ms<br>16.0 q | 4.94 ms (1.37×)<br>16.0 q | 5.18 ms (1.44×)<br>16.0 q |
-| check/folder-depth-10 | 5.74 ms<br>37.0 q | 10.70 ms (1.86×)<br>35.6 q | 10.91 ms (1.90×)<br>35.7 q |
-| check/wide-union-last | 912 µs<br>8.0 q | 2.32 ms (2.55×)<br>8.0 q | 2.56 ms (2.81×)<br>8.0 q |
-| check/wide-union-denied | 985 µs<br>8.0 q | 2.32 ms (2.36×)<br>8.0 q | 2.60 ms (2.64×)<br>8.0 q |
-| check/intersection | 1.10 ms<br>10.0 q | 2.81 ms (2.56×)<br>9.5 q | 3.08 ms (2.81×)<br>9.5 q |
-| check/exclusion | 869 µs<br>8.0 q | 667 µs (0.77×)<br>2.0 q | 894 µs (1.03×)<br>2.0 q |
-| check/condition | 302 µs<br>1.0 q | 325 µs (1.07×)<br>1.0 q | 550 µs (1.82×)<br>1.0 q |
-| batch-check/25 | 17.92 ms<br>175.0 q | 50.74 ms (2.83×)<br>174.4 q | 51.17 ms (2.86×)<br>174.5 q |
-| list-objects/1000 | 4.96 ms<br>9.0 q | 6.70 ms (1.35×)<br>9.0 q | 7.26 ms (1.46×)<br>9.0 q |
-| list-users/200 | 1.15 ms<br>4.0 q | 1.61 ms (1.40×)<br>4.0 q | 1.84 ms (1.61×)<br>4.0 q |
+| check/direct | 161 µs<br>1.0 q | 173 µs (1.07×)<br>1.0 q | 403 µs (2.50×)<br>1.0 q | 163 µs (1.01×)<br>1.0 q | 395 µs (2.45×)<br>1.0 q |
+| check/direct-denied | 156 µs<br>1.0 q | 169 µs (1.08×)<br>1.0 q | 399 µs (2.56×)<br>1.0 q | 159 µs (1.02×)<br>1.0 q | 390 µs (2.50×)<br>1.0 q |
+| check/computed | 409 µs<br>7.0 q | 939 µs (2.30×)<br>6.4 q | 1.18 ms (2.90×)<br>6.4 q | 379 µs (0.93×)<br>7.0 q / 2.0 rt | 618 µs (1.51×)<br>7.0 q / 2.0 rt |
+| check/nested-groups | 1.75 ms<br>16.0 q | 2.47 ms (1.41×)<br>16.0 q | 2.71 ms (1.55×)<br>16.0 q | 1.79 ms (1.02×)<br>16.0 q / 11.0 rt | 2.03 ms (1.16×)<br>16.0 q / 11.0 rt |
+| check/folder-depth-10 | 2.77 ms<br>37.0 q | 5.11 ms (1.84×)<br>35.6 q | 5.36 ms (1.93×)<br>35.6 q | 3.55 ms (1.28×)<br>37.0 q / 22.0 rt | 3.74 ms (1.35×)<br>37.0 q / 22.0 rt |
+| check/wide-union-last | 468 µs<br>8.0 q | 1.17 ms (2.51×)<br>8.0 q | 1.41 ms (3.02×)<br>8.0 q | 394 µs (0.84×)<br>8.0 q / 2.1 rt | 619 µs (1.32×)<br>8.0 q / 2.1 rt |
+| check/wide-union-denied | 499 µs<br>8.0 q | 1.17 ms (2.34×)<br>8.0 q | 1.41 ms (2.83×)<br>8.0 q | 387 µs (0.78×)<br>8.0 q / 2.1 rt | 619 µs (1.24×)<br>8.0 q / 2.1 rt |
+| check/intersection | 545 µs<br>10.0 q | 1.41 ms (2.58×)<br>9.5 q | 1.62 ms (2.98×)<br>9.5 q | 454 µs (0.83×)<br>10.0 q / 2.0 rt | 687 µs (1.26×)<br>10.0 q / 2.0 rt |
+| check/exclusion | 403 µs<br>8.0 q | 362 µs (0.90×)<br>2.0 q | 596 µs (1.48×)<br>2.0 q | 393 µs (0.98×)<br>8.0 q / 2.0 rt | 626 µs (1.55×)<br>8.0 q / 2.0 rt |
+| check/condition | 161 µs<br>1.0 q | 177 µs (1.10×)<br>1.0 q | 408 µs (2.53×)<br>1.0 q | 164 µs (1.02×)<br>1.0 q | 397 µs (2.47×)<br>1.0 q |
+| batch-check/25 | 7.53 ms<br>175.0 q | 24.89 ms (3.31×)<br>174.4 q | 25.05 ms (3.33×)<br>174.3 q | 2.83 ms (0.38×)<br>175.0 q / 4.0 rt | 3.11 ms (0.41×)<br>175.0 q / 3.7 rt |
+| list-objects/1000 | 3.45 ms<br>9.0 q | 4.69 ms (1.36×)<br>9.0 q | 5.01 ms (1.45×)<br>9.0 q | 4.00 ms (1.16×)<br>9.0 q / 4.0 rt | 4.43 ms (1.28×)<br>9.0 q / 4.0 rt |
+| list-users/200 | 728 µs<br>4.0 q | 945 µs (1.30×)<br>4.0 q | 1.19 ms (1.63×)<br>4.0 q | 945 µs (1.30×)<br>4.0 q / 2.0 rt | 1.18 ms (1.63×)<br>4.0 q / 2.0 rt |
 
 ### Write — sqlite
 
 | operation | OpenFGA | atomicfga, tx per op |
 |---|---:|---:|
-| write/tuple | 230 µs | 228 µs (0.99×)<br>5.0 q |
-| write/tuple-with-app-row | 296 µs | 243 µs (0.82×)<br>5.0 q |
+| write/tuple | 221 µs | 227 µs (1.03×)<br>5.0 q |
+| write/tuple-with-app-row | 296 µs | 242 µs (0.82×)<br>5.0 q |
+
+### Write — turso
+
+| operation | OpenFGA (on SQLite) | atomicfga, tx per op |
+|---|---:|---:|
+| write/tuple | 221 µs | 660 µs (2.99×)<br>5.0 q |
+| write/tuple-with-app-row | 296 µs | 676 µs (2.28×)<br>5.0 q |
 
 ### Write — postgres
 
 | operation | OpenFGA | atomicfga, tx per op | pgx, tx per op |
 |---|---:|---:|---:|
-| write/tuple | 656 µs | 852 µs (1.30×)<br>5.0 q | 831 µs (1.27×)<br>5.0 q |
-| write/tuple-with-app-row | 1.03 ms | 974 µs (0.95×)<br>5.0 q | 940 µs (0.92×)<br>5.0 q |
-
-### Write — mysql
-
-| operation | OpenFGA | atomicfga, tx per op |
-|---|---:|---:|
-| write/tuple | 1.57 ms | 1.89 ms (1.20×)<br>5.0 q |
-| write/tuple-with-app-row | 2.59 ms | 2.07 ms (0.80×)<br>5.0 q |
+| write/tuple | 648 µs | 834 µs (1.29×)<br>5.0 q | 819 µs (1.26×)<br>5.0 q |
+| write/tuple-with-app-row | 1.04 ms | 952 µs (0.91×)<br>5.0 q | 931 µs (0.89×)<br>5.0 q |
 
 ## Parallel (16 callers, one transaction per operation)
 
@@ -161,53 +173,62 @@ Lower is better: time per operation across all callers.
 
 | operation | OpenFGA | atomicfga, tx per op |
 |---|---:|---:|
-| check/direct | 47 µs | 34 µs (0.71×) |
+| check/direct | 47 µs | 32 µs (0.69×) |
 | check/direct-denied | 47 µs | 33 µs (0.70×) |
-| check/computed | 693 µs | 210 µs (0.30×) |
-| check/nested-groups | 1.25 ms | 520 µs (0.42×) |
-| check/folder-depth-10 | 2.82 ms | 1.01 ms (0.36×) |
-| check/wide-union-last | 724 µs | 256 µs (0.35×) |
-| check/wide-union-denied | 850 µs | 253 µs (0.30×) |
-| check/intersection | 1.02 ms | 342 µs (0.34×) |
-| check/exclusion | 783 µs | 100 µs (0.13×) |
-| check/condition | 58 µs | 37 µs (0.64×) |
-| batch-check/25 | 32.86 ms | 6.25 ms (0.19×) |
-| list-objects/1000 | 3.22 ms | 2.78 ms (0.86×) |
-| list-users/200 | 450 µs | 263 µs (0.58×) |
+| check/computed | 655 µs | 212 µs (0.32×) |
+| check/nested-groups | 1.23 ms | 521 µs (0.42×) |
+| check/folder-depth-10 | 2.80 ms | 1.02 ms (0.36×) |
+| check/wide-union-last | 712 µs | 276 µs (0.39×) |
+| check/wide-union-denied | 807 µs | 270 µs (0.33×) |
+| check/intersection | 1.02 ms | 325 µs (0.32×) |
+| check/exclusion | 762 µs | 103 µs (0.13×) |
+| check/condition | 51 µs | 36 µs (0.70×) |
+| batch-check/25 | 31.77 ms | 6.35 ms (0.20×) |
+| list-objects/1000 | 3.33 ms | 3.09 ms (0.93×) |
+| list-users/200 | 436 µs | 267 µs (0.61×) |
+
+### ReadParallel — turso
+
+| operation | OpenFGA (on SQLite) | atomicfga, tx per op |
+|---|---:|---:|
+| check/direct | 53 µs | 31 µs (0.59×) |
+| check/direct-denied | 51 µs | 30 µs (0.57×) |
+| check/computed | 724 µs | 158 µs (0.22×) |
+| check/nested-groups | 1.47 ms | 465 µs (0.32×) |
+| check/folder-depth-10 | 2.88 ms | 896 µs (0.31×) |
+| check/wide-union-last | 752 µs | 195 µs (0.26×) |
+| check/wide-union-denied | 836 µs | 198 µs (0.24×) |
+| check/intersection | 1.09 ms | 228 µs (0.21×) |
+| check/exclusion | 806 µs | 90 µs (0.11×) |
+| check/condition | 62 µs | 31 µs (0.50×) |
+| batch-check/25 | 34.48 ms | 4.96 ms (0.14×) |
+| list-objects/1000 | 3.31 ms | 4.76 ms (1.44×) |
+| list-users/200 | 437 µs | 679 µs (1.55×) |
 
 ### ReadParallel — postgres
 
 | operation | OpenFGA | atomicfga, tx per op | pgx, tx per op |
 |---|---:|---:|---:|
-| check/direct | 42 µs | 117 µs (2.81×) | 138 µs (3.31×) |
-| check/direct-denied | 42 µs | 123 µs (2.95×) | 135 µs (3.25×) |
-| check/computed | 294 µs | 366 µs (1.24×) | 229 µs (0.78×) |
-| check/nested-groups | 671 µs | 745 µs (1.11×) | 669 µs (1.00×) |
-| check/folder-depth-10 | 1.57 ms | 1.56 ms (1.00×) | 1.35 ms (0.86×) |
-| check/wide-union-last | 330 µs | 409 µs (1.24×) | 233 µs (0.71×) |
-| check/wide-union-denied | 334 µs | 436 µs (1.31×) | 238 µs (0.71×) |
-| check/intersection | 425 µs | 471 µs (1.11×) | 269 µs (0.63×) |
-| check/exclusion | 323 µs | 196 µs (0.61×) | 234 µs (0.73×) |
-| check/condition | 43 µs | 114 µs (2.64×) | 131 µs (3.05×) |
-| batch-check/25 | 8.15 ms | 8.24 ms (1.01×) | 2.63 ms (0.32×) |
-| list-objects/1000 | 2.52 ms | 2.77 ms (1.10×) | 2.51 ms (1.00×) |
-| list-users/200 | 317 µs | 412 µs (1.30×) | 385 µs (1.21×) |
+| check/direct | 42 µs | 114 µs (2.75×) | 146 µs (3.52×) |
+| check/direct-denied | 41 µs | 114 µs (2.76×) | 153 µs (3.70×) |
+| check/computed | 295 µs | 353 µs (1.20×) | 241 µs (0.82×) |
+| check/nested-groups | 680 µs | 764 µs (1.12×) | 688 µs (1.01×) |
+| check/folder-depth-10 | 1.82 ms | 2.11 ms (1.16×) | 1.48 ms (0.81×) |
+| check/wide-union-last | 341 µs | 421 µs (1.23×) | 237 µs (0.69×) |
+| check/wide-union-denied | 338 µs | 456 µs (1.35×) | 265 µs (0.78×) |
+| check/intersection | 436 µs | 513 µs (1.18×) | 289 µs (0.66×) |
+| check/exclusion | 331 µs | 196 µs (0.59×) | 236 µs (0.71×) |
+| check/condition | 43 µs | 118 µs (2.74×) | 131 µs (3.03×) |
+| batch-check/25 | 8.04 ms | 8.60 ms (1.07×) | 2.56 ms (0.32×) |
+| list-objects/1000 | 2.41 ms | 2.68 ms (1.11×) | 2.76 ms (1.14×) |
+| list-users/200 | 309 µs | 418 µs (1.35×) | 383 µs (1.24×) |
 
-### ReadParallel — mysql
+## Engine reference
 
-| operation | OpenFGA | atomicfga, tx per op |
+`BenchmarkRawQuery`: the indexed lookup of a direct check sent straight to each SQLite engine's driver, in a read transaction (median of three runs).
+
+| engine | unprepared | prepared |
 |---|---:|---:|
-| check/direct | 95 µs | 161 µs (1.69×) |
-| check/direct-denied | 92 µs | 162 µs (1.76×) |
-| check/computed | 502 µs | 698 µs (1.39×) |
-| check/nested-groups | 1.51 ms | 1.60 ms (1.06×) |
-| check/folder-depth-10 | 3.48 ms | 3.55 ms (1.02×) |
-| check/wide-union-last | 741 µs | 805 µs (1.09×) |
-| check/wide-union-denied | 709 µs | 794 µs (1.12×) |
-| check/intersection | 738 µs | 940 µs (1.27×) |
-| check/exclusion | 540 µs | 281 µs (0.52×) |
-| check/condition | 95 µs | 166 µs (1.76×) |
-| batch-check/25 | 17.95 ms | 17.76 ms (0.99×) |
-| list-objects/1000 | 3.68 ms | 3.12 ms (0.85×) |
-| list-users/200 | 570 µs | 693 µs (1.22×) |
-
+| SQLite (modernc) | 48 µs | 31 µs |
+| Turso (tursogo, seeded statistics) | 82 µs | 82 µs |
+| Turso without statistics (before the fix) | 368 µs | 370 µs |

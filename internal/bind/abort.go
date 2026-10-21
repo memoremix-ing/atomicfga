@@ -3,7 +3,8 @@ package bind
 import (
 	"errors"
 
-	"github.com/go-sql-driver/mysql"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type abortError struct{ cause error }
@@ -25,11 +26,15 @@ func abortsTransaction(err error) bool {
 			return true
 		}
 	}
-	// MySQL: InnoDB rolls back the whole transaction of a deadlock victim
-	// (1213, SQLSTATE 40001); a lock wait timeout rolls back one statement.
-	var my *mysql.MySQLError
-	if errors.As(err, &my) {
-		return my.Number == 1213 || string(my.SQLState[:]) == "40001"
+	// SQLite: a busy statement inside a transaction means its snapshot
+	// cannot become a write transaction (or the lock wait timed out). The
+	// transaction must be rolled back and retried; BEGIN IMMEDIATE avoids it.
+	var lite *sqlite.Error
+	if errors.As(err, &lite) {
+		switch lite.Code() & 0xff {
+		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+			return true
+		}
 	}
 	return false
 }

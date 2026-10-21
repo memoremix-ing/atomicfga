@@ -43,8 +43,9 @@ atomicfga is a separate module that builds the sibling OpenFGA checkout
 (`../../../openfga/openfga.git/lts-1`, see `upstream.json`) through a `replace`
 directive. It does not modify that checkout. Everything above the SQL layer is
 upstream code: the server, Check/ListObjects/ListUsers resolution, model and
-tuple validation, conditions (CEL), and the SQLite and MySQL datastores
-themselves.
+tuple validation, conditions (CEL), and the SQLite datastore itself, which
+also serves the Turso database engine. Supported databases are PostgreSQL,
+SQLite and Turso.
 
 - **`internal/bind`** is a `database/sql` driver whose connections hold no
   database state. Each statement is routed to the session found in its
@@ -53,8 +54,8 @@ themselves.
   unmodified, and issue exactly the SQL they normally issue.
 - **`internal/pgstore`** is upstream's PostgreSQL datastore expressed over
   `database/sql`. Upstream's is hard-wired to `pgxpool.Pool`. The statements,
-  locking and batching are the same; tuple writes use `sqlcommon.Write`, as the
-  MySQL datastore does.
+  locking and batching are the same; tuple writes use upstream's shared
+  `sqlcommon.Write`.
 - **`Session`** pins every request to an authorization model that is visible
   in the transaction before OpenFGA's process-wide model caches are consulted
   (see [design](docs/design.md#shared-caches)), detects transactions the
@@ -82,9 +83,9 @@ Errors:
 - If the database aborts the transaction (deadlock, serialization failure, or
   any PostgreSQL error outside a savepoint), the call returns an error matching
   `errors.Is(err, atomicfga.ErrTransactionAborted)` with gRPC code `Aborted`.
-  The session refuses all further statements. This matters on MySQL, where a
-  deadlocked transaction is rolled back and later statements would otherwise
-  run in autocommit mode. Roll back and retry the whole transaction.
+  On SQLite and Turso, a busy error inside a transaction counts too: a
+  deferred transaction could not become a write transaction. The session
+  refuses all further statements. Roll back and retry the whole transaction.
 - Concurrent transactions inserting the same tuple fail as upstream does,
   with OpenFGA's own `Aborted` ("transactional write failed due to conflict").
   The failure is confined to the write's savepoint, but under `REPEATABLE
@@ -97,25 +98,39 @@ Isolation and locking:
 - Writes take the same row locks as upstream (`SELECT … FOR UPDATE` on the
   affected tuples), and hold them until **your** transaction ends.
 - To make a decision safe against concurrent revocation (check, then act on
-  the result), use `REPEATABLE READ` or `SERIALIZABLE` on PostgreSQL,
-  `SERIALIZABLE` on MySQL, and SQLite write transactions (`BEGIN IMMEDIATE`).
-  Retry aborted transactions. `TestHegelCheckThenAct` verifies this property.
-- **MySQL:** at the default `REPEATABLE READ`, concurrent tuple writes take
-  gap locks and deadlock readily (upstream writes at `READ COMMITTED`). Prefer
-  `READ COMMITTED` unless you need the check-then-act guarantee, and retry
-  `ErrTransactionAborted`. `READ UNCOMMITTED` is not supported.
+  the result), use `REPEATABLE READ` or `SERIALIZABLE` on PostgreSQL, and
+  write transactions (`BEGIN IMMEDIATE`) on SQLite and Turso. Retry aborted
+  transactions. `TestHegelCheckThenAct` verifies this property.
 - **SQLite:** use `BEGIN IMMEDIATE` (`_txlock=immediate`) for transactions
   that write, as OpenFGA does; read-only transactions may be deferred.
+- **Turso:** tursogo's `BeginTx` always issues a deferred `BEGIN`. For a
+  transaction that writes, take a `*sql.Conn`, execute `BEGIN IMMEDIATE`, and
+  bind the connection: `atomicfga.SQLTx(conn)`; finish with `COMMIT` or
+  `ROLLBACK`.
 
 Drivers: PostgreSQL through pgx v5, either native (`pgx.Tx`, or a `*pgx.Conn`
-after `BEGIN`) or `database/sql` with `pgx/stdlib`. MySQL through
-`github.com/go-sql-driver/mysql` with `parseTime=true`. SQLite through
-`modernc.org/sqlite`. These are OpenFGA's drivers, and its datastores rely on
-their error types.
+after `BEGIN`) or `database/sql` with `pgx/stdlib`. SQLite through
+`modernc.org/sqlite`, OpenFGA's own driver, whose error types its datastore
+relies on. Turso through `turso.tech/database/tursogo` with
+`atomicfga.Turso`: atomicfga translates its constraint and busy errors (by
+message, so applications that do not use Turso do not link its native
+library).
+
+Turso specifics, all covered by the test suites:
+
+- Turso's parser limits expression depth to 100, and OpenFGA deletes a
+  write's tuples with one `OR` per tuple. The Turso engine therefore defaults
+  to 64 tuples per write (upstream: 100) and rejects more than 90.
+- Without statistics, Turso's planner answers OpenFGA's point lookups by
+  scanning every tuple in the store (7–12× slower). `Migrate` seeds
+  `sqlite_stat1` with statistics shaped like a large multi-store database,
+  unless statistics already exist; `ANALYZE` replaces them. Turso connections
+  read statistics only when they open, so the first time, migrate through a
+  separate `*sql.DB` (or before the application's connections open).
 
 Schema: `atomicfga.Migrate(ctx, db, dialect)` applies OpenFGA's own embedded
 migrations through goose, recording them in `goose_db_version` exactly as
-`openfga migrate` does.
+`openfga migrate` does. Turso uses the SQLite migrations.
 
 ## Differences from an OpenFGA server
 
@@ -147,17 +162,20 @@ dataset, after checking that both return the same results. See
 [results](benchmarks/RESULTS.md) and [method](benchmarks/METHOD.md). Inside an
 existing transaction:
 
-| | PostgreSQL, pgx | PostgreSQL, `database/sql` | MySQL | SQLite |
+| | PostgreSQL, pgx | PostgreSQL, `database/sql` | SQLite | Turso¹ |
 |---|---:|---:|---:|---:|
-| single-query check | 1.01× | 1.08× | 1.06× | 1.12× |
-| 8-way union | 0.82× | 2.49× | 2.55× | 0.92× |
-| BatchCheck of 25 | 0.39× | 3.40× | 2.83× | 0.43× |
-| 10-level recursion | 1.28× | 1.86× | 1.86× | 1.00× |
-| ListObjects (1000) | 1.19× | 1.34× | 1.35× | 1.41× |
-| tuple write + application row, committed | 0.92× | 0.95× | 0.80× | 0.82× |
+| single-query check | 1.01× | 1.07× | 1.13× | 1.48× |
+| 8-way union | 0.84× | 2.51× | 0.96× | 1.30× |
+| BatchCheck of 25 | 0.38× | 3.31× | 0.44× | 0.65× |
+| 10-level recursion | 1.28× | 1.84× | 1.03× | 1.69× |
+| ListObjects (1000) | 1.16× | 1.36× | 1.39× | 2.80× |
+| tuple write + application row, committed | 0.89× | 0.91× | 0.82× | 2.28× |
 
 (Time relative to upstream; lower is better. The last row includes the
-transaction; upstream needs two non-atomic transactions for it.)
+transaction; upstream needs two non-atomic transactions for it. ¹Upstream has
+no Turso datastore: Turso is compared with upstream on SQLite, so its column
+includes the engine's own cost. A raw indexed lookup takes 82 µs on Turso
+against 48 µs on SQLite.)
 
 - **Pitfall: one connection.** Upstream fans a check out over pooled
   connections; inside a transaction those reads are serialized. With pgx,
@@ -168,32 +186,36 @@ transaction; upstream needs two non-atomic transactions for it.)
   exclusions and intersections often issue fewer queries than upstream.
 - Model resolution adds no queries once a model is known to be committed. A
   request without a model ID costs one indexed `LIMIT 1` query; upstream's
-  PostgreSQL and MySQL datastores read every model row of the store for it.
+  PostgreSQL datastore reads every model row of the store for it.
 - Results are buffered (required to share one connection), so ListObjects
   and ListUsers allocate per row and run 1.2–1.4× slower.
 - A transaction opened *only* for a check pays `BEGIN`/`ROLLBACK` round trips
   (~2.5× for a single-query check on PostgreSQL).
+- **Pitfall: Turso's planner.** Without statistics it scanned the whole store
+  for every point lookup (4.5× slower on the benchmark dataset, and growing
+  with the store). `Migrate` seeds statistics; see Turso specifics above.
 
 ## Tests
 
 ```sh
-make databases     # PostgreSQL 17 and MySQL 8 containers (docker or podman)
+make databases     # a PostgreSQL 17 container (docker or podman)
 make test-unit     # transaction semantics, upstream datastore suite, driver
 make test-upstream # OpenFGA's own Check/ListObjects/ListUsers suites
 make test-hegel    # Hegel model-based tests against the original OpenFGA
 make bench
 ```
 
-Every suite runs against SQLite, PostgreSQL (`database/sql` and native pgx) and
-MySQL (default and `READ COMMITTED` isolation). Set `ATOMICFGA_DIALECTS` to
-restrict them.
+Every suite runs against SQLite, Turso and PostgreSQL (`database/sql` and
+native pgx). Set `ATOMICFGA_DIALECTS` (`sqlite,turso,postgres`) to restrict
+them. Upstream has no Turso datastore, so for Turso the original OpenFGA
+reference runs upstream's SQLite datastore.
 
 - **Upstream datastore conformance**: OpenFGA's `pkg/storage/test` suite, run
   with each call in its own application transaction.
 - **Upstream assertion suites and matrices**: OpenFGA's
   `consolidated_1_1_tests.yaml`, `abac_tests.yaml` and the generated Check and
-  ListObjects matrices, with each resolution strategy upstream tests (55,412
-  passing subtests across the variants).
+  ListObjects matrices, with each resolution strategy upstream tests (44,330
+  passing subtests across the four variants).
 - **Hegel model-based tests** (`tests/hegel_test.go`, [hegel.dev](https://hegel.dev)):
   a state machine drives tuple writes and deletes, newly generated model
   versions, assertions, application rows, commits, rollbacks and

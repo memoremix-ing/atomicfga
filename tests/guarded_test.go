@@ -226,17 +226,13 @@ func conflictErr(err error) bool {
 
 func runGuarded(t *testing.T, outside bool) {
 	for _, v := range variants() {
-		if v.dialect == atomicfga.MySQL && v.isolation == sql.LevelReadCommitted {
-			continue // READ COMMITTED does not make check-then-act safe
-		}
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 			db := v.open(t)
-			// SERIALIZABLE: PostgreSQL detects the read/write conflict, and
-			// MySQL takes shared locks for the check's reads. SQLite
-			// transactions (BEGIN IMMEDIATE) are serial.
+			// PostgreSQL detects the read/write conflict at SERIALIZABLE.
+			// SQLite and Turso write transactions (BEGIN IMMEDIATE) are serial.
 			db.Isolation = sql.LevelSerializable
-			if v.dialect == atomicfga.SQLite {
+			if v.dialect != atomicfga.Postgres {
 				db.Isolation = sql.LevelDefault
 			}
 			for _, stmt := range []string{

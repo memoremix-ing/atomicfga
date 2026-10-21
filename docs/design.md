@@ -9,8 +9,8 @@ leak state between transactions.
 
 ## Routing statements into the caller's transaction
 
-OpenFGA's SQLite and MySQL datastores (and its shared `sqlcommon` helpers) are
-written against `*sql.DB`. They query through pooled connections, iterate
+OpenFGA's SQLite datastore (and its shared `sqlcommon` helpers) are written
+against `*sql.DB`. They query through pooled connections, iterate
 results lazily, and call `BeginTx` for writes.
 
 `internal/bind` provides a `*sql.DB` backed by a loopback driver. Its
@@ -25,8 +25,8 @@ concurrent transactions.
   everything). The application's driver performs the only conversion, exactly
   as it would for OpenFGA.
 - **Results** are read completely before the statement returns (`Result`).
-  A transaction is one connection. PostgreSQL and MySQL cannot start a
-  statement while another's rows are still streaming. OpenFGA iterators are
+  A transaction is one connection. PostgreSQL cannot start a statement while
+  another's rows are still streaming. OpenFGA iterators are
   consumed concurrently from many goroutines, so streaming would deadlock or
   fail with "conn busy".
 - **`BeginTx`** becomes `SAVEPOINT atomicfga_N`; `Commit` becomes `RELEASE
@@ -36,9 +36,8 @@ concurrent transactions.
   with a partially applied write. Savepoints nest correctly inside the
   application's own savepoints.
 - **Cancellation** is stripped before statements reach the application's
-  driver (`context.WithoutCancel`). pgx closes the connection, and
-  go-sql-driver/mysql kills it, when a running statement's context is
-  canceled. That would destroy the application's transaction whenever OpenFGA
+  driver (`context.WithoutCancel`). pgx closes the connection when a running
+  statement's context is canceled. That would destroy the application's transaction whenever OpenFGA
   cancels a losing branch of a union.
 
 PostgreSQL is the exception: upstream's datastore uses `*pgxpool.Pool`
@@ -79,11 +78,33 @@ or after commit. With pgx this failed with "conn busy".
 ## Aborted transactions
 
 When the database reports that the whole transaction is lost (SQLSTATE
-`40001`, `40P01`, `25P02`, or MySQL error 1213), the session records it and
-refuses every further statement. The call returns `ErrTransactionAborted`
-(gRPC `Aborted`). On MySQL a deadlock victim's transaction is rolled back and
-the connection returns to autocommit. Without the refusal, the statements that
-followed would silently commit one by one.
+`40001`, `40P01` or `25P02` on PostgreSQL; a busy error inside a SQLite or
+Turso transaction), the session records it and refuses every further
+statement. The call returns `ErrTransactionAborted` (gRPC `Aborted`). A
+database that has rolled the transaction back would otherwise run the
+statements that follow outside it, committing them one by one.
+
+## Turso
+
+The Turso engine runs OpenFGA's SQLite datastore. Three differences from
+SQLite needed handling, each found by the upstream conformance suite or the
+benchmarks:
+
+- **Error types.** OpenFGA recognizes constraint violations only as
+  `modernc.org/sqlite` errors. `bind.TursoErrors` wraps Turso's constraint
+  errors so that `errors.As` also finds a genuine modernc constraint error
+  (produced once from an in-memory database, since its fields are
+  unexported), and treats Turso's busy errors as aborts. Errors are matched
+  by message, so atomicfga does not link Turso's native library for others.
+- **Expression depth.** Turso's parser limits expressions to depth 100, and
+  OpenFGA deletes a write's tuples with one `OR` term per tuple. Deletes of
+  more than 91 tuples fail, so Turso engines default to 64 tuples per write
+  and refuse more than 90.
+- **Planner statistics.** Without `sqlite_stat1`, Turso answers OpenFGA's
+  point lookups through the `(store, ulid)` index, reading every tuple of the
+  store: 7–12× slower than SQLite. Statistics of empty tables do not help.
+  `Migrate` seeds fixed statistics of a large multi-store database (unless
+  statistics exist), which Turso connections load when they open.
 
 ## Shared caches
 

@@ -1,9 +1,9 @@
 // Package testdb creates fresh, migrated databases for tests and benchmarks.
 //
-// SQLite databases are files in the test's temporary directory. PostgreSQL
-// and MySQL databases are created on the servers started by
-// scripts/databases.sh (or named by ATOMICFGA_POSTGRES_URI and
-// ATOMICFGA_MYSQL_URI) and dropped afterwards. Tests are skipped when a
+// SQLite and Turso databases are files in the test's temporary directory.
+// PostgreSQL databases are created on the server started by
+// scripts/databases.sh (or named by ATOMICFGA_POSTGRES_URI) and dropped
+// afterwards. Tests are skipped when a
 // server is unreachable, unless ATOMICFGA_REQUIRE_DATABASES is set.
 package testdb
 
@@ -21,18 +21,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
+	_ "turso.tech/database/tursogo"
 
 	"github.com/memoremix-ing/atomicfga"
 )
 
 const (
 	defaultPostgres = "postgres://postgres:atomicfga@localhost:55432/postgres?sslmode=disable"
-	defaultMySQL    = "root:atomicfga@tcp(localhost:53306)/"
 )
 
 // DB is a fresh database with OpenFGA's schema.
@@ -58,7 +57,7 @@ type DB struct {
 func Dialects() []atomicfga.Dialect {
 	v := os.Getenv("ATOMICFGA_DIALECTS")
 	if v == "" {
-		return []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Postgres, atomicfga.MySQL}
+		return []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso, atomicfga.Postgres}
 	}
 	var ds []atomicfga.Dialect
 	for _, d := range strings.Split(v, ",") {
@@ -88,10 +87,10 @@ func Open(tb testing.TB, d atomicfga.Dialect) *DB {
 	switch d {
 	case atomicfga.SQLite:
 		db = openSQLite(tb)
+	case atomicfga.Turso:
+		db = openTurso(tb)
 	case atomicfga.Postgres:
 		db = openPostgres(tb)
-	case atomicfga.MySQL:
-		db = openMySQL(tb)
 	default:
 		tb.Fatalf("unknown dialect %q", d)
 	}
@@ -121,6 +120,28 @@ func openSQLite(tb testing.TB) *DB {
 	}
 	tb.Cleanup(func() { _ = sqldb.Close(); _ = reader.Close() })
 	return &DB{Dialect: atomicfga.SQLite, SQL: sqldb, URI: path, Name: path, Reader: reader}
+}
+
+func openTurso(tb testing.TB) *DB {
+	path := filepath.Join(tb.TempDir(), "openfga.db")
+	// Migrate through a separate handle: Turso connections read planner
+	// statistics (which Migrate seeds) only when they open.
+	migrator, err := sql.Open("turso", path)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := atomicfga.Migrate(ctx, migrator, atomicfga.Turso); err != nil {
+		tb.Fatalf("migrate turso: %v", err)
+	}
+	_ = migrator.Close()
+	sqldb, err := sql.Open("turso", path)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = sqldb.Close() })
+	return &DB{Dialect: atomicfga.Turso, SQL: sqldb, URI: path, Name: path, Reader: sqldb}
 }
 
 var (
@@ -186,32 +207,6 @@ func openPostgres(tb testing.TB) *DB {
 	return &DB{Dialect: atomicfga.Postgres, SQL: sqldb, Pgx: pool, URI: uri, Name: name, Reader: sqldb}
 }
 
-func openMySQL(tb testing.TB) *DB {
-	adminURI := env("ATOMICFGA_MYSQL_URI", defaultMySQL)
-	a := admin(tb, "mysql", adminURI)
-	name := uniqueName()
-	if _, err := a.Exec("CREATE DATABASE " + name); err != nil {
-		tb.Fatalf("create database: %v", err)
-	}
-	cfg, err := mysql.ParseDSN(adminURI)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	cfg.DBName = name
-	cfg.ParseTime = true
-	uri := cfg.FormatDSN()
-
-	sqldb, err := sql.Open("mysql", uri)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() {
-		_ = sqldb.Close()
-		_, _ = a.Exec("DROP DATABASE IF EXISTS " + name)
-	})
-	return &DB{Dialect: atomicfga.MySQL, SQL: sqldb, URI: uri, Name: name, Reader: sqldb}
-}
-
 // Begin starts an application transaction and binds it as a [atomicfga.Tx].
 // With pgx set (PostgreSQL only) the transaction is a native pgx.Tx.
 func (db *DB) Begin(tb testing.TB, native bool) (atomicfga.Tx, func() error, func() error) {
@@ -251,6 +246,26 @@ func (db *DB) BeginTx(ctx context.Context, native bool) (tx atomicfga.Tx, commit
 			return nil, nil, nil, err
 		}
 		return atomicfga.PgxTx(ptx), func() error { return ptx.Commit(ctx) }, func() error { return ptx.Rollback(ctx) }, nil
+	}
+	if db.Dialect == atomicfga.Turso {
+		// tursogo's BeginTx issues a deferred BEGIN; writers take the lock
+		// up front, as OpenFGA's SQLite datastore does.
+		conn, err := db.SQL.Conn(ctx)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+			_ = conn.Close()
+			return nil, nil, nil, err
+		}
+		end := func(stmt string) func() error {
+			return func() error {
+				defer conn.Close()
+				_, err := conn.ExecContext(context.WithoutCancel(ctx), stmt)
+				return err
+			}
+		}
+		return atomicfga.SQLTx(conn), end("COMMIT"), end("ROLLBACK"), nil
 	}
 	stx, err := db.SQL.BeginTx(ctx, &sql.TxOptions{Isolation: db.Isolation})
 	if err != nil {

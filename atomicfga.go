@@ -24,7 +24,6 @@ import (
 
 	"github.com/openfga/openfga/pkg/server"
 	"github.com/openfga/openfga/pkg/storage"
-	"github.com/openfga/openfga/pkg/storage/mysql"
 	"github.com/openfga/openfga/pkg/storage/sqlcommon"
 	"github.com/openfga/openfga/pkg/storage/sqlite"
 
@@ -37,8 +36,15 @@ type Dialect string
 
 const (
 	Postgres Dialect = "postgres"
-	MySQL    Dialect = "mysql"
 	SQLite   Dialect = "sqlite"
+	// Turso is the Turso database engine (turso.tech/database/tursogo). It
+	// speaks SQLite's SQL and uses OpenFGA's SQLite schema and datastore.
+	Turso Dialect = "turso"
+)
+
+const (
+	tursoDefaultMaxTuplesPerWrite = 64
+	tursoMaxTuplesPerWrite        = 90
 )
 
 // Option configures an [Engine].
@@ -104,7 +110,17 @@ func newEngine(dialect Dialect, opts ...Option) (*Engine, error) {
 	}
 
 	db := bind.OpenDB()
+	if dialect == Turso {
+		// Turso's parser limits expression depth to 100. OpenFGA deletes a
+		// write's tuples with one OR of per-tuple conditions, which exceeds
+		// it beyond 91 deletes.
+		o.datastore = append([]sqlcommon.DatastoreOption{sqlcommon.WithMaxTuplesPerWrite(tursoDefaultMaxTuplesPerWrite)}, o.datastore...)
+	}
 	cfg := sqlcommon.NewConfig(append(o.datastore, sqlcommon.WithMaxIdleConns(256))...)
+	if dialect == Turso && cfg.MaxTuplesPerWriteField > tursoMaxTuplesPerWrite {
+		_ = db.Close()
+		return nil, fmt.Errorf("atomicfga: Turso supports at most %d tuples per write, not %d", tursoMaxTuplesPerWrite, cfg.MaxTuplesPerWriteField)
+	}
 
 	var (
 		ds   storage.OpenFGADatastore
@@ -115,9 +131,7 @@ func newEngine(dialect Dialect, opts ...Option) (*Engine, error) {
 	case Postgres:
 		ds = pgstore.New(db, cfg)
 		stbl = stbl.PlaceholderFormat(sq.Dollar)
-	case MySQL:
-		ds, err = mysql.NewWithDB(db, nil, cfg)
-	case SQLite:
+	case SQLite, Turso:
 		ds, err = sqlite.NewWithDB(db, cfg)
 	default:
 		err = fmt.Errorf("atomicfga: unsupported dialect %q", dialect)
@@ -195,6 +209,9 @@ func PgxTx(tx PgxQueryer) Tx { return bind.PgxBackend{Tx: tx} }
 // serialized onto the transaction. The application must not use tx while a
 // session call is in progress.
 func (e *Engine) Session(tx Tx) *Session {
+	if e.dialect == Turso {
+		tx = bind.TursoErrors(tx)
+	}
 	return &Session{
 		engine:  e,
 		bind:    bind.NewSession(tx),
