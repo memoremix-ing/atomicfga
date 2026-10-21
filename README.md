@@ -65,15 +65,24 @@ SQLite and Turso.
 ## Transaction contract
 
 1. Begin a transaction on the database that holds OpenFGA's schema and the
-   application's tables. Create **one session per transaction** with
-   `engine.Session(atomicfga.SQLTx(tx))` or `atomicfga.PgxTx(tx)`.
-2. Use the session for every OpenFGA operation in that transaction. A session
-   is safe for concurrent use; its statements are serialized onto the
-   transaction. Do not use the transaction yourself *while* a session call is
-   in progress. A call does not return until none of its statements is still
-   running.
+   application's tables: a `*sql.Tx`, a `pgx.Tx`, or (SQLite and Turso
+   writers) an `*atomicfga.ImmediateTx` from `atomicfga.BeginImmediate`.
+2. Wrap it whenever you need OpenFGA: `engine.Session(atomicfga.SQLTx(tx))` or
+   `engine.Session(atomicfga.PgxTx(tx))`. Every session of one transaction
+   shares the transaction's state, so wrap it in as many places as is
+   convenient, and use sessions concurrently if you like: their statements
+   are serialized onto the transaction. Do not use the transaction yourself
+   *while* a session call is in progress. A call does not return until none
+   of its statements is still running.
 3. Commit or roll back the transaction yourself. atomicfga never begins,
    commits or rolls back it, and never uses another connection.
+
+Sessions recognize a transaction by the identity of the transaction object,
+and keep its state only while that object is reachable. That is why
+`SQLTx`/`PgxTx` refuse a `*sql.DB`, `*sql.Conn` or `*pgx.Conn`: a pool
+spreads statements over connections, and a connection outlives its
+transactions, so neither identifies one. A custom `Tx` must be a pointer
+type for the same reason.
 
 Errors:
 
@@ -101,15 +110,14 @@ Isolation and locking:
   the result), use `REPEATABLE READ` or `SERIALIZABLE` on PostgreSQL, and
   write transactions (`BEGIN IMMEDIATE`) on SQLite and Turso. Retry aborted
   transactions. `TestHegelCheckThenAct` verifies this property.
-- **SQLite:** use `BEGIN IMMEDIATE` (`_txlock=immediate`) for transactions
-  that write, as OpenFGA does; read-only transactions may be deferred.
-- **Turso:** tursogo's `BeginTx` always issues a deferred `BEGIN`. For a
-  transaction that writes, take a `*sql.Conn`, execute `BEGIN IMMEDIATE`, and
-  bind the connection: `atomicfga.SQLTx(conn)`; finish with `COMMIT` or
-  `ROLLBACK`.
+- **SQLite and Turso:** begin transactions that write with
+  `atomicfga.BeginImmediate(ctx, db)`, which takes the write lock up front as
+  OpenFGA does (`BEGIN IMMEDIATE`) and behaves like `*sql.Tx`. tursogo's
+  `BeginTx` is always deferred; for modernc SQLite, `_txlock=immediate` in the
+  DSN works too. Read-only transactions may be deferred.
 
-Drivers: PostgreSQL through pgx v5, either native (`pgx.Tx`, or a `*pgx.Conn`
-after `BEGIN`) or `database/sql` with `pgx/stdlib`. SQLite through
+Drivers: PostgreSQL through pgx v5, either native (`pgx.Tx`) or
+`database/sql` with `pgx/stdlib`. SQLite through
 `modernc.org/sqlite`, OpenFGA's own driver, whose error types its datastore
 relies on. Turso through `turso.tech/database/tursogo` with
 `atomicfga.Turso`: atomicfga translates its constraint and busy errors (by

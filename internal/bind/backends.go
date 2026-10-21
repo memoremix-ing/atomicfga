@@ -6,14 +6,15 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"reflect"
 	"time"
+	"unsafe"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// SQLQueryer is satisfied by *sql.Tx, and by *sql.Conn when the caller has
-// issued BEGIN on that connection.
+// SQLQueryer is satisfied by *sql.Tx and atomicfga's *ImmediateTx.
 type SQLQueryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -67,8 +68,7 @@ func (b SQLBackend) Exec(ctx context.Context, query string, args []any) (int64, 
 	return res.RowsAffected()
 }
 
-// PgxQueryer is satisfied by pgx.Tx, and by *pgx.Conn when the caller has
-// issued BEGIN on that connection.
+// PgxQueryer is satisfied by pgx.Tx.
 type PgxQueryer interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
@@ -172,4 +172,27 @@ func pgxValue(v any) (driver.Value, error) {
 		return x.Value()
 	}
 	return nil, fmt.Errorf("unsupported postgres value of type %T", v)
+}
+
+// Identity returns the address of the transaction object behind b, or nil
+// if b does not wrap a pointer. Two backends with the same identity are the
+// same transaction.
+func Identity(b Backend) unsafe.Pointer {
+	switch t := b.(type) {
+	case tursoBackend:
+		return Identity(t.Backend)
+	case SQLBackend:
+		return pointerOf(t.Tx)
+	case PgxBackend:
+		return pointerOf(t.Tx)
+	}
+	return pointerOf(b)
+}
+
+func pointerOf(x any) unsafe.Pointer {
+	v := reflect.ValueOf(x)
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
+		return v.UnsafePointer()
+	}
+	return nil
 }

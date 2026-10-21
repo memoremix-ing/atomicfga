@@ -32,12 +32,24 @@ type Session struct {
 	openfgav1.UnimplementedOpenFGAServiceServer
 
 	engine *Engine
-	bind   *bind.Session
+	tx     Tx
+	*txState
+}
+
+// txState is shared by every Session of one transaction. It does not
+// reference the transaction, so the engine can keep it exactly as long as
+// the transaction is reachable.
+type txState struct {
+	bind *bind.Session
 
 	mu      sync.Mutex
 	visible map[string]bool // models confirmed visible in this transaction
 	written map[string]bool // models written by this transaction
 	writing int             // model writes in progress
+}
+
+func newTxState() *txState {
+	return &txState{bind: bind.NewSession(), visible: map[string]bool{}, written: map[string]bool{}}
 }
 
 var _ openfgav1.OpenFGAServiceServer = (*Session)(nil)
@@ -53,7 +65,7 @@ func (s *Session) RoundTrips() int64 { return s.bind.RoundTrips() }
 // must be called when the API call returns; it waits for any statement the
 // call still has in flight and discards the rest.
 func (s *Session) call(ctx context.Context) (context.Context, func()) {
-	c := s.bind.Call()
+	c := s.bind.Call(s.tx)
 	return bind.WithCall(ctx, c), c.Finish
 }
 

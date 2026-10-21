@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/openfga/openfga/pkg/server"
 	"github.com/openfga/openfga/pkg/storage"
@@ -82,6 +83,7 @@ type Engine struct {
 	server    *server.Server
 	stbl      sq.StatementBuilderType
 	committed *modelSet
+	sessions  registry
 }
 
 // constructMu serializes datastore construction: upstream's
@@ -181,43 +183,54 @@ type Tx = bind.Backend
 // Result is a fully read query result returned by a [Tx].
 type Result = bind.Result
 
-// SQLQueryer is satisfied by *sql.Tx (and by a *sql.Conn on which the
-// application has issued BEGIN).
+// SQLQueryer is satisfied by *sql.Tx and *ImmediateTx.
 type SQLQueryer = bind.SQLQueryer
 
-// PgxQueryer is satisfied by pgx.Tx (and by a *pgx.Conn on which the
-// application has issued BEGIN).
+// PgxQueryer is satisfied by pgx.Tx.
 type PgxQueryer = bind.PgxQueryer
 
-// SQLTx binds a database/sql transaction for any dialect. It panics if
-// given a *sql.DB: its statements would run on different pooled connections,
-// outside any one transaction.
+// SQLTx binds a database/sql transaction (*sql.Tx, or *ImmediateTx from
+// [BeginImmediate]) for any dialect.
+//
+// It panics if given a *sql.DB or *sql.Conn. A database's statements would
+// run on different pooled connections; a connection outlives its
+// transactions, so it cannot identify one (see [Engine.Session]).
 func SQLTx(tx SQLQueryer) Tx {
-	if _, ok := tx.(*sql.DB); ok {
-		panic("atomicfga: SQLTx needs a *sql.Tx (or a *sql.Conn inside BEGIN), not a *sql.DB")
+	switch tx.(type) {
+	case *sql.DB:
+		panic("atomicfga: SQLTx needs a transaction (*sql.Tx or *atomicfga.ImmediateTx), not a *sql.DB")
+	case *sql.Conn:
+		panic("atomicfga: SQLTx needs a transaction (*sql.Tx or *atomicfga.ImmediateTx), not a *sql.Conn; for BEGIN IMMEDIATE use atomicfga.BeginImmediate")
 	}
 	return bind.SQLBackend{Tx: tx}
 }
 
-// PgxTx binds a native pgx transaction (PostgreSQL only).
-func PgxTx(tx PgxQueryer) Tx { return bind.PgxBackend{Tx: tx} }
+// PgxTx binds a native pgx transaction (PostgreSQL only). It panics if
+// given a *pgx.Conn: a connection outlives its transactions, so it cannot
+// identify one. Use the pgx.Tx returned by Begin.
+func PgxTx(tx PgxQueryer) Tx {
+	if _, ok := tx.(*pgx.Conn); ok {
+		panic("atomicfga: PgxTx needs a pgx.Tx, not a *pgx.Conn")
+	}
+	return bind.PgxBackend{Tx: tx}
+}
 
 // Session returns a session that runs OpenFGA operations inside tx.
 //
-// Create exactly one session per transaction and stop using it when the
-// transaction ends. A session is safe for concurrent use; its statements are
-// serialized onto the transaction. The application must not use tx while a
-// session call is in progress.
+// Every session of the same transaction shares its state: call Session as
+// often as convenient (for example in each function that receives the
+// transaction), and use the sessions concurrently if you like. Their
+// statements are serialized onto the transaction. The application must not
+// use tx itself while a session call is in progress.
+//
+// Transactions are recognized by identity: the *sql.Tx, *ImmediateTx or
+// pgx.Tx behind tx, or tx itself for a custom Tx, which must therefore be
+// implemented on a pointer type (Session panics otherwise).
 func (e *Engine) Session(tx Tx) *Session {
 	if e.dialect == Turso {
 		tx = bind.TursoErrors(tx)
 	}
-	return &Session{
-		engine:  e,
-		bind:    bind.NewSession(tx),
-		visible: map[string]bool{},
-		written: map[string]bool{},
-	}
+	return &Session{engine: e, tx: tx, txState: e.sessions.state(tx)}
 }
 
 // ErrTransactionAborted matches (with errors.Is) the error returned once the

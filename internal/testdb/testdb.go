@@ -248,24 +248,13 @@ func (db *DB) BeginTx(ctx context.Context, native bool) (tx atomicfga.Tx, commit
 		return atomicfga.PgxTx(ptx), func() error { return ptx.Commit(ctx) }, func() error { return ptx.Rollback(ctx) }, nil
 	}
 	if db.Dialect == atomicfga.Turso {
-		// tursogo's BeginTx issues a deferred BEGIN; writers take the lock
-		// up front, as OpenFGA's SQLite datastore does.
-		conn, err := db.SQL.Conn(ctx)
+		// tursogo's BeginTx is deferred; writers take the lock up front, as
+		// OpenFGA's SQLite datastore does.
+		itx, err := atomicfga.BeginImmediate(ctx, db.SQL)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-			_ = conn.Close()
-			return nil, nil, nil, err
-		}
-		end := func(stmt string) func() error {
-			return func() error {
-				defer conn.Close()
-				_, err := conn.ExecContext(context.WithoutCancel(ctx), stmt)
-				return err
-			}
-		}
-		return atomicfga.SQLTx(conn), end("COMMIT"), end("ROLLBACK"), nil
+		return atomicfga.SQLTx(itx), itx.Commit, itx.Rollback, nil
 	}
 	stx, err := db.SQL.BeginTx(ctx, &sql.TxOptions{Isolation: db.Isolation})
 	if err != nil {

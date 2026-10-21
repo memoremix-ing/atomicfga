@@ -75,6 +75,33 @@ statement in flight and makes later statements of the call fail with
 straggler could run after the application has resumed using its transaction,
 or after commit. With pgx this failed with "conn busy".
 
+## One state per transaction
+
+Applications naturally wrap the same transaction in several places (a
+repository layer, helpers, goroutines). Everything a session knows about its
+transaction therefore lives in one shared `txState`: the statement queue and
+semaphore, the aborted flag, savepoint numbering, and which models are
+visible in or were written by the transaction. With separate state per
+wrapper, a model written through one wrapper and seen through another would
+be taken for committed, and stay resolvable from cache after a rollback; and
+two wrappers would send statements onto one connection concurrently.
+
+The engine keeps a registry from transaction to state. Its keys are weak
+pointers to the transaction object (`weak.Pointer`), and the state holds no
+reference to the transaction: each API call carries it. A
+`runtime.AddCleanup` on the transaction removes the entry once the
+transaction is unreachable. Weak pointers identify objects rather than
+addresses, so a later transaction at a reused address gets fresh state.
+
+Identity must belong to one transaction, so `SQLTx` and `PgxTx` refuse a
+`*sql.DB` (statements would spread over pooled connections) and a `*sql.Conn`
+or `*pgx.Conn` (a connection outlives its transactions: state, such as a
+rolled-back model's visibility or an aborted flag, would carry over). For
+SQLite and Turso writers, which previously needed a connection for `BEGIN
+IMMEDIATE`, `BeginImmediate` returns a transaction object. `Session` panics
+on a custom `Tx` without pointer identity. `TestSessionsOfOneTransaction*`
+fail when the registry is disabled.
+
 ## Aborted transactions
 
 When the database reports that the whole transaction is lost (SQLSTATE

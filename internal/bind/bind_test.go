@@ -106,10 +106,10 @@ func TestQueriesRunOnTheSessionBackend(t *testing.T) {
 			if pipeline {
 				b = pipelining{f}
 			}
-			s := NewSession(b)
 			db := OpenDB()
+			s := NewSession()
 			defer db.Close()
-			call := s.Call()
+			call := s.Call(b)
 			ctx := WithCall(context.Background(), call)
 			var wg sync.WaitGroup
 			for i := range 50 {
@@ -141,10 +141,11 @@ func TestSavepointHoldsTheSessionUntilItEnds(t *testing.T) {
 	for _, commit := range []bool{true, false} {
 		t.Run(fmt.Sprint("commit=", commit), func(t *testing.T) {
 			f := &fake{}
-			s := NewSession(pipelining{f})
+			b := Backend(pipelining{f})
 			db := OpenDB()
+			s := NewSession()
 			defer db.Close()
-			call := s.Call()
+			call := s.Call(b)
 			ctx := WithCall(context.Background(), call)
 			tx, err := db.BeginTx(ctx, nil)
 			if err != nil {
@@ -191,10 +192,10 @@ func TestFinishedCallsSendNoMoreStatements(t *testing.T) {
 			if pipeline {
 				b = pipelining{f}
 			}
-			s := NewSession(b)
 			db := OpenDB()
+			s := NewSession()
 			defer db.Close()
-			call := s.Call()
+			call := s.Call(b)
 			// OpenFGA detaches query contexts from cancellation; stragglers
 			// are recognized by their call alone.
 			ctx := context.WithoutCancel(WithCall(context.Background(), call))
@@ -228,7 +229,7 @@ func TestFinishedCallsSendNoMoreStatements(t *testing.T) {
 				}
 			}
 			// The application, and other calls, can use the session again.
-			next := s.Call()
+			next := s.Call(b)
 			if _, err := query(WithCall(context.Background(), next), db, "SELECT next"); err != nil {
 				t.Fatal(err)
 			}
@@ -244,10 +245,10 @@ func TestCanceledQueriesAreDroppedWhileQueued(t *testing.T) {
 			if pipeline {
 				b = pipelining{f}
 			}
-			s := NewSession(b)
 			db := OpenDB()
+			s := NewSession()
 			defer db.Close()
-			call := s.Call()
+			call := s.Call(b)
 			base := WithCall(context.Background(), call)
 			go func() { _, _ = query(base, db, "SELECT slow") }()
 			time.Sleep(2 * time.Millisecond)
@@ -287,10 +288,11 @@ func TestAbortedTransactionsRefuseFurtherStatements(t *testing.T) {
 	for _, state := range []string{"40001", "40P01", "25P02"} {
 		t.Run(state, func(t *testing.T) {
 			f := &fake{}
-			s := NewSession(pipelining{f})
+			b := Backend(pipelining{f})
 			db := OpenDB()
+			s := NewSession()
 			defer db.Close()
-			ctx := WithCall(context.Background(), s.Call())
+			ctx := WithCall(context.Background(), s.Call(b))
 			if _, err := query(ctx, db, "SELECT fail:"+state); !errors.Is(err, ErrTransactionAborted) || s.Aborted() == nil {
 				t.Fatalf("got %v", err)
 			}
@@ -309,10 +311,11 @@ func TestAbortedTransactionsRefuseFurtherStatements(t *testing.T) {
 		})
 	}
 	t.Run("statement errors do not abort", func(t *testing.T) {
-		s := NewSession(&fake{})
+		b := Backend(&fake{})
 		db := OpenDB()
+		s := NewSession()
 		defer db.Close()
-		ctx := WithCall(context.Background(), s.Call())
+		ctx := WithCall(context.Background(), s.Call(b))
 		if _, err := query(ctx, db, "SELECT fail:23505"); err == nil || errors.Is(err, ErrTransactionAborted) {
 			t.Fatalf("got %v", err)
 		}

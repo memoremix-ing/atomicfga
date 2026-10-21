@@ -99,7 +99,7 @@ func (s *Session) lead(p Pipeliner) {
 		s.statements.Add(int64(len(live)))
 		s.roundTrips.Add(1)
 		if len(live) == 1 {
-			res, err := s.backend.Query(context.WithoutCancel(live[0].ctx), live[0].stmt.Query, live[0].stmt.Args)
+			res, err := live[0].call.backend.Query(context.WithoutCancel(live[0].ctx), live[0].stmt.Query, live[0].stmt.Args)
 			live[0].finish(res, s.observe(err))
 			continue
 		}

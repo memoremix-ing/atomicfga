@@ -53,14 +53,18 @@ type Backend interface {
 	Exec(ctx context.Context, query string, args []any) (int64, error)
 }
 
-// Session serializes statements onto a single Backend.
+// Session is the state of one transaction: it serializes statements onto
+// the transaction and records whether the database aborted it.
+//
+// A Session does not reference the transaction itself; each [Call] carries
+// it. Session state can therefore be kept for exactly as long as the
+// transaction is reachable (see atomicfga's session registry).
 //
 // A Session is safe for concurrent use. OpenFGA resolves checks with many
 // goroutines; their statements are queued here, and statements whose context
 // is canceled while queued are dropped without reaching the database.
 type Session struct {
-	backend Backend
-	sem     chan struct{}
+	sem chan struct{}
 
 	qmu   sync.Mutex
 	queue []*pending // queries awaiting a pipeline (see Pipeliner)
@@ -72,9 +76,9 @@ type Session struct {
 	aborted    atomic.Pointer[abortError]
 }
 
-// NewSession returns a Session that executes statements on b.
-func NewSession(b Backend) *Session {
-	return &Session{backend: b, sem: make(chan struct{}, 1)}
+// NewSession returns the state for a new transaction.
+func NewSession() *Session {
+	return &Session{sem: make(chan struct{}, 1)}
 }
 
 // Statements reports how many statements the session has sent to its backend,
@@ -123,15 +127,17 @@ func (s *Session) release() {
 	<-s.sem
 }
 
-// Call scopes the statements of one API call to a session.
+// Call scopes the statements of one API call to a session, and carries the
+// transaction they run on.
 type Call struct {
 	session *Session
+	backend Backend
 	done    atomic.Bool
 }
 
-// Call starts an API call on the session.
-func (s *Session) Call() *Call {
-	return &Call{session: s}
+// Call starts an API call on the session's transaction b.
+func (s *Session) Call(b Backend) *Call {
+	return &Call{session: s, backend: b}
 }
 
 // Finish ends the call. Statements it issued that are still queued are
@@ -182,7 +188,7 @@ func (c *Call) admit(ctx context.Context, held bool) error {
 }
 
 func (c *Call) query(ctx context.Context, held bool, query string, args []any) (*Result, error) {
-	if p, ok := c.session.backend.(Pipeliner); ok && !held {
+	if p, ok := c.backend.(Pipeliner); ok && !held {
 		return c.pipelined(ctx, p, query, args)
 	}
 	if err := c.admit(ctx, held); err != nil {
@@ -191,7 +197,7 @@ func (c *Call) query(ctx context.Context, held bool, query string, args []any) (
 	if !held {
 		defer c.session.release()
 	}
-	res, err := c.session.backend.Query(context.WithoutCancel(ctx), query, args)
+	res, err := c.backend.Query(context.WithoutCancel(ctx), query, args)
 	return res, c.session.observe(err)
 }
 
@@ -202,7 +208,7 @@ func (c *Call) exec(ctx context.Context, held bool, query string, args []any) (i
 	if !held {
 		defer c.session.release()
 	}
-	n, err := c.session.backend.Exec(context.WithoutCancel(ctx), query, args)
+	n, err := c.backend.Exec(context.WithoutCancel(ctx), query, args)
 	return n, c.session.observe(err)
 }
 
@@ -215,14 +221,14 @@ func (c *Call) begin(ctx context.Context) (string, error) {
 	}
 	s := c.session
 	name := "atomicfga_" + strconv.FormatUint(s.savepoints.Add(1), 10)
-	if _, err := s.backend.Exec(context.WithoutCancel(ctx), "SAVEPOINT "+name, nil); err != nil {
+	if _, err := c.backend.Exec(context.WithoutCancel(ctx), "SAVEPOINT "+name, nil); err != nil {
 		s.release()
 		return "", s.observe(err)
 	}
 	return name, nil
 }
 
-func (s *Session) end(statements ...string) error {
+func (s *Session) end(b Backend, statements ...string) error {
 	defer s.release()
 	if a := s.aborted.Load(); a != nil {
 		return a
@@ -230,7 +236,7 @@ func (s *Session) end(statements ...string) error {
 	for _, stmt := range statements {
 		s.statements.Add(1)
 		s.roundTrips.Add(1)
-		if _, err := s.backend.Exec(context.Background(), stmt, nil); err != nil {
+		if _, err := b.Exec(context.Background(), stmt, nil); err != nil {
 			return s.observe(err)
 		}
 	}

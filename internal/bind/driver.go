@@ -191,12 +191,12 @@ type savepoint struct {
 
 func (t *savepoint) Commit() error {
 	t.conn.tx = nil
-	return t.call.session.end("RELEASE SAVEPOINT " + t.name)
+	return t.call.session.end(t.call.backend, "RELEASE SAVEPOINT "+t.name)
 }
 
 func (t *savepoint) Rollback() error {
 	t.conn.tx = nil
-	return t.call.session.end("ROLLBACK TO SAVEPOINT "+t.name, "RELEASE SAVEPOINT "+t.name)
+	return t.call.session.end(t.call.backend, "ROLLBACK TO SAVEPOINT "+t.name, "RELEASE SAVEPOINT "+t.name)
 }
 
 type rows struct {
