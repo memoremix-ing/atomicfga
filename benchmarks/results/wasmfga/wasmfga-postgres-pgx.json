@@ -1,0 +1,106 @@
+{
+ "goVersion": "go1.27.1",
+ "gomaxprocs": 8,
+ "measurements": [
+  {
+   "iterations": 5000,
+   "medianUs": 388.042,
+   "p95Us": 459.292,
+   "statements": 8.9998,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "direct-grant"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 387.584,
+   "p95Us": 463.875,
+   "statements": 9,
+   "tuples": 0,
+   "warmup": 500,
+   "workload": "empty-deny"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 2423.125,
+   "p95Us": 2551.583,
+   "statements": 22,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "userset-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 4163.708,
+   "p95Us": 4882.083,
+   "statements": 56.9998,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "parent-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 394.458,
+   "p95Us": 472.416,
+   "statements": 9,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "intersection"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 383.833,
+   "p95Us": 446.25,
+   "statements": 8.9992,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "exclusion"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 391.666,
+   "p95Us": 464.125,
+   "statements": 9,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "cel-int"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 406.209,
+   "p95Us": 463.542,
+   "statements": 8.9984,
+   "tuples": 100,
+   "warmup": 500,
+   "workload": "snapshot-100"
+  },
+  {
+   "iterations": 500,
+   "medianUs": 403.542,
+   "p95Us": 464.209,
+   "statements": 9,
+   "tuples": 1000,
+   "warmup": 100,
+   "workload": "snapshot-1000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 475.25,
+   "p95Us": 542.792,
+   "statements": 9,
+   "tuples": 10000,
+   "warmup": 10,
+   "workload": "snapshot-10000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 477.292,
+   "p95Us": 536.75,
+   "statements": 9,
+   "tuples": 100000,
+   "warmup": 10,
+   "workload": "snapshot-100000"
+  }
+ ],
+ "target": "postgres-pgx"
+}

@@ -1,0 +1,106 @@
+{
+ "goVersion": "go1.27.1",
+ "gomaxprocs": 8,
+ "measurements": [
+  {
+   "iterations": 5000,
+   "medianUs": 636.875,
+   "p95Us": 835.792,
+   "statements": 4.3688,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "direct-grant"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1150.625,
+   "p95Us": 1303.125,
+   "statements": 8.2184,
+   "tuples": 0,
+   "warmup": 500,
+   "workload": "empty-deny"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 3216.75,
+   "p95Us": 3428.958,
+   "statements": 21.2158,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "userset-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 7431,
+   "p95Us": 8277.375,
+   "statements": 53.7062,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "parent-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1254.833,
+   "p95Us": 1348.791,
+   "statements": 8.6572,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "intersection"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 342.917,
+   "p95Us": 407,
+   "statements": 1.9978,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "exclusion"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1105.25,
+   "p95Us": 1285.042,
+   "statements": 7.5456,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "cel-int"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 642.584,
+   "p95Us": 933.875,
+   "statements": 4.408,
+   "tuples": 100,
+   "warmup": 500,
+   "workload": "snapshot-100"
+  },
+  {
+   "iterations": 500,
+   "medianUs": 641.417,
+   "p95Us": 878.667,
+   "statements": 4.448,
+   "tuples": 1000,
+   "warmup": 100,
+   "workload": "snapshot-1000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 735.584,
+   "p95Us": 953.417,
+   "statements": 4.24,
+   "tuples": 10000,
+   "warmup": 10,
+   "workload": "snapshot-10000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 718.084,
+   "p95Us": 980.459,
+   "statements": 4.28,
+   "tuples": 100000,
+   "warmup": 10,
+   "workload": "snapshot-100000"
+  }
+ ],
+ "target": "postgres-sql"
+}

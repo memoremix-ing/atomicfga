@@ -199,6 +199,9 @@ against 48 µs on SQLite.)
   and ListUsers allocate per row and run 1.2–1.4× slower.
 - A transaction opened *only* for a check pays `BEGIN`/`ROLLBACK` round trips
   (~2.5× for a single-query check on PostgreSQL).
+- **No snapshot cost.** Under the sibling wasmfga project's native benchmark,
+  a check costs the same with 1 or 100,000 tuples in the store; wasmfga's
+  snapshot port takes 436 ms at 10,000. See [wasmfga comparison](benchmarks/WASMFGA.md).
 - **Pitfall: Turso's planner.** Without statistics it scanned the whole store
   for every point lookup (4.5× slower on the benchmark dataset, and growing
   with the store). `Migrate` seeds statistics; see Turso specifics above.

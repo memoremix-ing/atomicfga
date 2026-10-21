@@ -1,0 +1,402 @@
+{
+ "source": "github.com/memoremix-ing/wasmfga sts-0 03225a7b tests/fixtures/{model,cases}.json and benchmarks/workloads.json",
+ "model": {
+  "schema_version": "1.1",
+  "type_definitions": [
+   {
+    "type": "user"
+   },
+   {
+    "type": "group",
+    "relations": {
+     "member": {
+      "this": {}
+     }
+    },
+    "metadata": {
+     "relations": {
+      "member": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        },
+        {
+         "type": "group",
+         "relation": "member"
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "type": "folder",
+    "relations": {
+     "parent": {
+      "this": {}
+     },
+     "viewer": {
+      "union": {
+       "child": [
+        {
+         "this": {}
+        },
+        {
+         "tupleToUserset": {
+          "tupleset": {
+           "relation": "parent"
+          },
+          "computedUserset": {
+           "relation": "viewer"
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    "metadata": {
+     "relations": {
+      "parent": {
+       "directly_related_user_types": [
+        {
+         "type": "folder"
+        }
+       ]
+      },
+      "viewer": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        },
+        {
+         "type": "group",
+         "relation": "member"
+        },
+        {
+         "type": "user",
+         "wildcard": {}
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "type": "document",
+    "relations": {
+     "parent": {
+      "this": {}
+     },
+     "owner": {
+      "this": {}
+     },
+     "viewer": {
+      "this": {}
+     },
+     "editor": {
+      "this": {}
+     },
+     "restricted": {
+      "this": {}
+     },
+     "blocked": {
+      "this": {}
+     },
+     "conditional": {
+      "this": {}
+     },
+     "both": {
+      "intersection": {
+       "child": [
+        {
+         "computedUserset": {
+          "relation": "editor"
+         }
+        },
+        {
+         "computedUserset": {
+          "relation": "restricted"
+         }
+        }
+       ]
+      }
+     },
+     "can_view": {
+      "difference": {
+       "base": {
+        "union": {
+         "child": [
+          {
+           "computedUserset": {
+            "relation": "viewer"
+           }
+          },
+          {
+           "computedUserset": {
+            "relation": "owner"
+           }
+          },
+          {
+           "computedUserset": {
+            "relation": "both"
+           }
+          },
+          {
+           "computedUserset": {
+            "relation": "conditional"
+           }
+          },
+          {
+           "tupleToUserset": {
+            "tupleset": {
+             "relation": "parent"
+            },
+            "computedUserset": {
+             "relation": "viewer"
+            }
+           }
+          }
+         ]
+        }
+       },
+       "subtract": {
+        "computedUserset": {
+         "relation": "blocked"
+        }
+       }
+      }
+     }
+    },
+    "metadata": {
+     "relations": {
+      "parent": {
+       "directly_related_user_types": [
+        {
+         "type": "folder"
+        }
+       ]
+      },
+      "owner": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        }
+       ]
+      },
+      "editor": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        }
+       ]
+      },
+      "restricted": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        }
+       ]
+      },
+      "blocked": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        }
+       ]
+      },
+      "viewer": {
+       "directly_related_user_types": [
+        {
+         "type": "user"
+        },
+        {
+         "type": "group",
+         "relation": "member"
+        },
+        {
+         "type": "user",
+         "wildcard": {}
+        }
+       ]
+      },
+      "conditional": {
+       "directly_related_user_types": [
+        {
+         "type": "user",
+         "condition": "granted"
+        }
+       ]
+      }
+     }
+    }
+   }
+  ],
+  "conditions": {
+   "granted": {
+    "name": "granted",
+    "expression": "level >= required",
+    "parameters": {
+     "level": {
+      "type_name": "TYPE_NAME_INT"
+     },
+     "required": {
+      "type_name": "TYPE_NAME_INT"
+     }
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "name": "deny_empty",
+   "tuples": [],
+   "check": {
+    "tuple_key": {
+     "object": "document:1",
+     "relation": "can_view",
+     "user": "user:alice"
+    }
+   },
+   "allowed": false
+  },
+  {
+   "name": "owner",
+   "tuples": [
+    {
+     "object": "document:1",
+     "relation": "owner",
+     "user": "user:alice"
+    }
+   ],
+   "check": {
+    "tuple_key": {
+     "object": "document:1",
+     "relation": "can_view",
+     "user": "user:alice"
+    }
+   },
+   "allowed": true
+  },
+  {
+   "name": "intersection_yes",
+   "tuples": [
+    {
+     "object": "document:1",
+     "relation": "editor",
+     "user": "user:alice"
+    },
+    {
+     "object": "document:1",
+     "relation": "restricted",
+     "user": "user:alice"
+    }
+   ],
+   "check": {
+    "tuple_key": {
+     "object": "document:1",
+     "relation": "can_view",
+     "user": "user:alice"
+    }
+   },
+   "allowed": true
+  },
+  {
+   "name": "exclusion",
+   "tuples": [
+    {
+     "object": "document:1",
+     "relation": "owner",
+     "user": "user:alice"
+    },
+    {
+     "object": "document:1",
+     "relation": "blocked",
+     "user": "user:alice"
+    }
+   ],
+   "check": {
+    "tuple_key": {
+     "object": "document:1",
+     "relation": "can_view",
+     "user": "user:alice"
+    }
+   },
+   "allowed": false
+  },
+  {
+   "name": "cel_true",
+   "tuples": [
+    {
+     "object": "document:1",
+     "relation": "conditional",
+     "user": "user:alice",
+     "condition": {
+      "name": "granted",
+      "context": {
+       "required": 3
+      }
+     }
+    }
+   ],
+   "check": {
+    "tuple_key": {
+     "object": "document:1",
+     "relation": "can_view",
+     "user": "user:alice"
+    },
+    "context": {
+     "level": 4
+    }
+   },
+   "allowed": true
+  }
+ ],
+ "workloads": [
+  {
+   "name": "direct-grant",
+   "case": "owner"
+  },
+  {
+   "name": "empty-deny",
+   "case": "deny_empty"
+  },
+  {
+   "name": "userset-chain-12",
+   "kind": "userset_chain",
+   "depth": 12
+  },
+  {
+   "name": "parent-chain-12",
+   "kind": "parent_chain",
+   "depth": 12
+  },
+  {
+   "name": "intersection",
+   "case": "intersection_yes"
+  },
+  {
+   "name": "exclusion",
+   "case": "exclusion"
+  },
+  {
+   "name": "cel-int",
+   "case": "cel_true"
+  },
+  {
+   "name": "snapshot-100",
+   "case": "owner",
+   "snapshot_size": 100
+  },
+  {
+   "name": "snapshot-1000",
+   "case": "owner",
+   "snapshot_size": 1000
+  },
+  {
+   "name": "snapshot-10000",
+   "case": "owner",
+   "snapshot_size": 10000
+  }
+ ]
+}
