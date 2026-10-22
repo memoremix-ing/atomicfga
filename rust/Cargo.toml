@@ -10,7 +10,13 @@ publish = false
 [lib]
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# A redb store (redb_store.rs): models and tuples in the caller's redb
+# transactions.
+redb = ["dep:redb"]
+
 [dependencies]
+redb = { version = "4.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 # float_roundtrip: condition parameters must convert exactly as protobuf's
 # float64 values do in Go.

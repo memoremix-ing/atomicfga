@@ -18,6 +18,8 @@ mod exec;
 mod ffi;
 mod model;
 mod outcome;
+#[cfg(feature = "redb")]
+pub mod redb_store;
 mod resolve;
 mod strings;
 mod validate;

@@ -246,6 +246,43 @@ third survived until the wildcard-only relation `doc#public` was added to
 the model. The fourth is an equivalent mutant: userset reads only return
 `type#relation` users, so the short-circuit never fires (in OpenFGA either).
 
+## A redb store
+
+With the `redb` feature, `src/redb_store.rs` serves OpenFGA's model, write
+and check APIs from [redb](https://www.redb.org) tables, in the caller's
+redb transactions: `Fga::write_model` and `Fga::write` take a
+`&WriteTransaction`, and `Fga::check` takes a `&ReadTransaction` or a
+`&WriteTransaction`, whose uncommitted writes it sees. Committing or
+aborting is the application's call, as with atomicfga's SQL sessions.
+Models go through the model compiler. Writes are validated as OpenFGA's
+`Write` validates them (protobuf rules, model resolution, the
+inline-expression flag, `ValidateTupleForWrite`, implicit tuples, context
+size, duplicates, the 100-tuple limit, then missing and existing tuples
+under `on_missing`/`on_duplicate`), all or nothing. Checks run on the
+evaluator's synchronous runner, whose reads are answered from the tuple
+table as OpenFGA's SQL datastores answer them.
+
+`TestHegelRustRedb` drives the same model writes, tuple writes and deletes,
+and checks into the original OpenFGA server and into the redb store, served
+by the Rust port alone, and compares every outcome: 12,910 operations, none
+wrong. A case is stopped once the port refuses a model or a write, as the
+stores could differ from then on. Of five planted bugs in the adapter, four
+fail it; the fifth (userset reads ignoring the user's type) has no effect,
+because every tuple read is revalidated against the model before use.
+
+An earlier mutant run left a counterexample that exposed a third upstream
+quirk. With `on_duplicate: ignore`, OpenFGA compares the written tuple with
+the stored one using `proto.Equal`. A stored condition always reads back
+with a context, an empty one if none was written, so re-sending an
+identical conditional tuple *without* a context fails as a conflict
+(`Aborted`), while sending `context: {}` succeeds. The store reproduces it;
+`ignored_duplicates_compare_as_openfga_does` pins it.
+
+redb runs in `wasm32-unknown-unknown` (its in-memory backend, no imports).
+With the store, the module is 1.21 MiB (373 KiB gzipped); persistence in a
+browser would need a `StorageBackend` over its file storage (OPFS), not
+written yet.
+
 ## Size and speed
 
 **WebAssembly.** `make wasm-size` builds the evaluator and the model

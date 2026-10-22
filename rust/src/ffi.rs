@@ -158,3 +158,119 @@ pub unsafe extern "C" fn afc_model_alternatives(json: *const u8, len: usize) -> 
     let json = bytes(json, len);
     buf(guarded(|| crate::alternatives_json(json)))
 }
+
+/// An in-memory redb database with a [`crate::redb_store::Fga`], for hosts
+/// and conformance tests. Each call runs in a transaction of its own, which
+/// it commits only if the call succeeds.
+#[cfg(feature = "redb")]
+pub struct RedbHandle {
+    db: redb::Database,
+    fga: crate::redb_store::Fga,
+}
+
+#[cfg(feature = "redb")]
+#[no_mangle]
+pub extern "C" fn afc_redb_new() -> *mut RedbHandle {
+    let db = redb::Database::builder()
+        .create_with_backend(redb::backends::InMemoryBackend::new())
+        .expect("in-memory redb");
+    Box::into_raw(Box::new(RedbHandle {
+        db,
+        fga: Default::default(),
+    }))
+}
+
+/// # Safety
+/// `h` must come from `afc_redb_new` and not be used afterwards.
+#[cfg(feature = "redb")]
+#[no_mangle]
+pub unsafe extern "C" fn afc_redb_free(h: *mut RedbHandle) {
+    if !h.is_null() {
+        drop(Box::from_raw(h));
+    }
+}
+
+#[cfg(feature = "redb")]
+fn in_write(h: &RedbHandle, f: impl FnOnce(&redb::WriteTransaction) -> Value) -> Value {
+    let tx = match h.db.begin_write() {
+        Ok(tx) => tx,
+        Err(e) => return json!({"error": {"code": "internal_error", "message": e.to_string()}}),
+    };
+    let v = f(&tx);
+    let ok = v.get("error").is_none() && v.get("refused").is_none();
+    let done = if ok {
+        tx.commit().map_err(|e| e.to_string())
+    } else {
+        tx.abort().map_err(|e| e.to_string())
+    };
+    match done {
+        Ok(()) => v,
+        Err(e) => json!({"error": {"code": "internal_error", "message": e}}),
+    }
+}
+
+/// `WriteAuthorizationModel` under model ID `id`.
+///
+/// # Safety
+/// `h` must be live; the pointers must point to readable bytes.
+#[cfg(feature = "redb")]
+#[no_mangle]
+pub unsafe extern "C" fn afc_redb_write_model(
+    h: *const RedbHandle,
+    store: *const u8,
+    store_len: usize,
+    id: *const u8,
+    id_len: usize,
+    json: *const u8,
+    len: usize,
+) -> AfcBuf {
+    let h = &*h;
+    let store = std::str::from_utf8(bytes(store, store_len)).unwrap_or("");
+    let id = std::str::from_utf8(bytes(id, id_len)).unwrap_or("");
+    let json = bytes(json, len);
+    buf(guarded(|| {
+        in_write(h, |tx| h.fga.write_model(tx, store, id, json))
+    }))
+}
+
+/// `Write` (a WriteRequest in protojson).
+///
+/// # Safety
+/// `h` must be live; the pointers must point to readable bytes.
+#[cfg(feature = "redb")]
+#[no_mangle]
+pub unsafe extern "C" fn afc_redb_write(
+    h: *const RedbHandle,
+    store: *const u8,
+    store_len: usize,
+    json: *const u8,
+    len: usize,
+) -> AfcBuf {
+    let h = &*h;
+    let store = std::str::from_utf8(bytes(store, store_len)).unwrap_or("");
+    let json = bytes(json, len);
+    buf(guarded(|| in_write(h, |tx| h.fga.write(tx, store, json))))
+}
+
+/// `Check` (a CheckRequest in protojson), in OpenFGA semantics.
+///
+/// # Safety
+/// `h` must be live; the pointers must point to readable bytes.
+#[cfg(feature = "redb")]
+#[no_mangle]
+pub unsafe extern "C" fn afc_redb_check(
+    h: *const RedbHandle,
+    store: *const u8,
+    store_len: usize,
+    json: *const u8,
+    len: usize,
+) -> AfcBuf {
+    use redb::ReadableDatabase;
+    let h = &*h;
+    let store = std::str::from_utf8(bytes(store, store_len)).unwrap_or("");
+    let json = bytes(json, len);
+    buf(guarded(|| match h.db.begin_read() {
+        Ok(tx) => h.fga.check(&tx, store, json, crate::Semantics::OpenFga),
+        Err(e) => json!({"error": {"code": "internal_error", "message": e.to_string()}}),
+    }))
+}

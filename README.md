@@ -262,7 +262,9 @@ to OpenFGA's Check. Build with `make rust` and `-tags rustcheck`. Its gates
 transaction; see [docs/rustcheck.md](docs/rustcheck.md) for the design,
 the results, and the upstream nondeterminism they surfaced. The evaluator
 also has a canonical (least-fixed-point) mode, checked against a Quint
-specification (`spec/check.qnt`, `make test-spec`).
+specification (`spec/check.qnt`, `make test-spec`), and an optional redb
+store (feature `redb`) that serves models, writes and checks in the
+caller's redb transactions.
 
 ## Layout
 

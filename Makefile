@@ -36,15 +36,15 @@ bench:
 
 # The Rust port of Check (see docs/rustcheck.md), linked with -tags rustcheck.
 rust:
-	cd rust && cargo build --release
+	cd rust && cargo build --release --features redb
 
 # Conformance gates: Rust unit tests, OpenFGA's Check suites and matrices,
 # the Hegel differentials and edge cases, comparing every Rust check with
 # OpenFGA's Check in the same transaction, and every compiled model with
 # OpenFGA's WriteAuthorizationModel.
 test-rust: rust test-spec
-	cd rust && cargo test --release --lib
-	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA' ./tests/
+	cd rust && cargo test --release --features redb --lib
+	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA|TestHegelRustRedb' ./tests/
 
 bench-rust: rust
 	ATOMICFGA_WASMFGA=1 $(GO) test -tags rustcheck -count=1 -timeout 120m -run TestWasmfgaWorkloads ./bench/
