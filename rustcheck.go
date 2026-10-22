@@ -19,6 +19,7 @@ bool afc_engine_has_model(const afc_engine *e, const uint8_t *id, size_t len);
 afc_buf afc_engine_load_model(const afc_engine *e, const uint8_t *json, size_t len);
 afc_task *afc_check_new(const afc_engine *e, const uint8_t *model, size_t model_len, const uint8_t *req, size_t req_len);
 afc_buf afc_check_step(afc_task *t, const uint8_t *answers, size_t len);
+afc_buf afc_model_alternatives(const uint8_t *json, size_t len);
 afc_buf afc_compile_model(const uint8_t *json, size_t len, const uint8_t *options, size_t options_len);
 void afc_check_free(afc_task *t);
 void afc_buf_free(afc_buf b);
@@ -43,7 +44,6 @@ import (
 
 	serverErrors "github.com/openfga/openfga/pkg/server/errors"
 	"github.com/openfga/openfga/pkg/storage"
-	"github.com/openfga/openfga/pkg/typesystem"
 
 	"github.com/memoremix-ing/atomicfga/internal/bind"
 )
@@ -221,11 +221,6 @@ func (s *Session) loadRustModel(ctx context.Context, engine *C.afc_engine, store
 		return serverErrors.HandleError("", err)
 	}
 	load := map[string]any{"model": json.RawMessage(modelJSON)}
-	if alternatives, err := strategyAlternatives(model); err != nil {
-		load["refuse"] = "model analysis: " + err.Error()
-	} else {
-		load["alternatives"] = alternatives
-	}
 	js, err := json.Marshal(load)
 	if err != nil {
 		return serverErrors.HandleError("", err)
@@ -242,61 +237,27 @@ func (s *Session) loadRustModel(ctx context.Context, engine *C.afc_engine, store
 	return nil
 }
 
-// strategyAlternatives lists the nodes OpenFGA's planner may resolve with
-// its recursive or weight-2 strategies, by OpenFGA's own predicates (which
-// rest on the weighted authorization model graph). The Rust evaluator
-// implements the default strategy and widens its outcomes at these nodes.
-func strategyAlternatives(model *openfgav1.AuthorizationModel) ([]string, error) {
-	ts, err := typesystem.New(model)
+// RustModelAlternatives returns the strategy table the Rust port derives
+// for a model: the nodes OpenFGA's planner may resolve with its recursive or
+// weight-2 strategies (keys "userset:type#relation@userType" and
+// "ttu:type#relation:tupleset:computed@userType"). It is exposed for
+// conformance tests.
+func RustModelAlternatives(model *openfgav1.AuthorizationModel) ([]string, error) {
+	js, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(model)
 	if err != nil {
 		return nil, err
 	}
-	keys := []string{}
-	types := model.GetTypeDefinitions()
-	for _, td := range types {
-		for relation, rewrite := range td.GetRelations() {
-			usersets, _ := ts.DirectlyRelatedUsersets(td.GetType(), relation)
-			for _, ut := range types {
-				userType := ut.GetType()
-				alt := ts.UsersetUseRecursiveResolver(td.GetType(), relation, userType)
-				for _, u := range usersets {
-					alt = alt || ts.UsersetUseWeight2Resolver(td.GetType(), relation, userType, u)
-				}
-				if alt {
-					keys = append(keys, fmt.Sprintf("userset:%s#%s@%s", td.GetType(), relation, userType))
-				}
-				for _, ttu := range ttus(rewrite) {
-					if ts.TTUUseWeight2Resolver(td.GetType(), relation, userType, ttu) || ts.TTUUseRecursiveResolver(td.GetType(), relation, userType, ttu) {
-						keys = append(keys, fmt.Sprintf("ttu:%s#%s:%s:%s@%s", td.GetType(), relation,
-							ttu.GetTupleset().GetRelation(), ttu.GetComputedUserset().GetRelation(), userType))
-					}
-				}
-			}
-		}
+	var out struct {
+		Alternatives []string `json:"alternatives"`
+		Error        *string  `json:"error"`
 	}
-	return keys, nil
-}
-
-func ttus(u *openfgav1.Userset) []*openfgav1.TupleToUserset {
-	switch x := u.GetUserset().(type) {
-	case *openfgav1.Userset_TupleToUserset:
-		return []*openfgav1.TupleToUserset{x.TupleToUserset}
-	case *openfgav1.Userset_Union:
-		var out []*openfgav1.TupleToUserset
-		for _, c := range x.Union.GetChild() {
-			out = append(out, ttus(c)...)
-		}
-		return out
-	case *openfgav1.Userset_Intersection:
-		var out []*openfgav1.TupleToUserset
-		for _, c := range x.Intersection.GetChild() {
-			out = append(out, ttus(c)...)
-		}
-		return out
-	case *openfgav1.Userset_Difference:
-		return append(ttus(x.Difference.GetBase()), ttus(x.Difference.GetSubtract())...)
+	if err := json.Unmarshal(take(C.afc_model_alternatives(ptr(js), C.size_t(len(js)))), &out); err != nil {
+		return nil, err
 	}
-	return nil
+	if out.Error != nil {
+		return nil, errors.New(*out.Error)
+	}
+	return out.Alternatives, nil
 }
 
 // rustRead is a datastore read requested by the evaluator.

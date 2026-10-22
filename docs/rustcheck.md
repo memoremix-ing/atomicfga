@@ -78,14 +78,32 @@ Those agree on reachability but not at the edges:
 
 The port implements the default resolver. At nodes where OpenFGA's own
 predicates (`TTUUseRecursiveResolver`, `UsersetUseWeight2Resolver`, …) admit
-a fast path, it widens the outcome set: it adds plain `false` beside a cycle,
+a fast path, it widens the outcome set (see below for how those predicates
+are evaluated): it adds plain `false` beside a cycle,
 refuses if the subtree came within three levels of the depth limit or
 errored, and refuses if any relation beneath it admits conditional tuples.
-The predicates rest on the weighted authorization model graph, which is not
-ported yet. The host computes them once per model with OpenFGA's typesystem
-and hands the table over with the model. A WebAssembly host would need the
-table precomputed (it could be stored with the model when it is written,
-since models are immutable) or the weighted graph ported.
+The predicates rest on the weighted authorization model graph of OpenFGA's
+`language` package. `src/weighted.rs` ports it: the builder, weight
+assignment with tuple-cycle resolution, the recursive and tuple-cycle marks,
+and the four predicates (userset weights and wildcard sets, which only
+ListObjects uses, are not ported). Every model the port loads derives its
+strategy table this way, so no host needs OpenFGA's Go typesystem.
+
+Go assigns weights visiting graph nodes in map order. Before porting, 1,793
+recursive models were each rebuilt 50 times in OpenFGA: the table never
+varied, so a port is well defined. `TestHegelWeightedGraphMatchesOpenFGA`
+compares the port's table with OpenFGA's on random valid models of three
+generators (one draws relations recursing along several paths at once):
+10,457 models, 14,424 table entries, identical. Of six planted bugs, five
+fail it; the survivor (cycles reached by several branches left unmarked) is
+very likely equivalent, since such relations are marked recursive or
+tuple-cyclic by another path, which the predicates check first.
+
+Because a compiled model is a pure function of the model's JSON, storing it
+next to the model is now only a cache: any host running the same build
+derives the same table. atomicfga keeps compiled models in memory per
+engine; a persistent cache would need to be keyed by the build that
+produced it.
 
 ## Gates
 
@@ -190,8 +208,9 @@ edge cases made the gates catch all eight.
 ## Size and speed
 
 **WebAssembly.** `make wasm-size` builds the evaluator and the model
-compiler for `wasm32-unknown-unknown` (`opt-level = "z"`, no `wasm-opt`):
-**556 KiB, 183 KiB gzipped** (the compiler adds 27 KiB gzipped), against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator and
+compiler and the weighted graph for `wasm32-unknown-unknown`
+(`opt-level = "z"`, no `wasm-opt`): **604 KiB, 196 KiB gzipped** (the
+compiler adds 27 KiB gzipped, the weighted graph 13 KiB), against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator and
 44.6 MiB / 8.7 MiB for its Go build. The difference is mostly the condition
 evaluator (no CEL library, no regex engine, no chrono) and the lack of an
 embedded datastore. The module exports the C ABI of `src/ffi.rs`; a
@@ -231,11 +250,9 @@ A prototype: no wrong answer in about 39,000 compared checks, at the cost of
 refusing roughly one check in four of upstream's suites. The next steps,
 in order of refusals removed:
 
-1. Persist compiled models (with the precomputed strategy table) next to
-   the model, so a host without OpenFGA's Go typesystem can evaluate.
-2. Port the recursive and weight-2 strategies (and the weighted graph that
+1. Port the recursive and weight-2 strategies (the weighted graph that
    selects them) as further outcome-set producers, replacing the widening
    rule. This removes nearly all refusals in upstream's suites.
-3. List and map parameters, `in`, and the CEL macros OpenFGA's users rely on.
-4. Inline `$expression` conditions.
-5. Error messages identical to upstream's (codes already are).
+2. List and map parameters, `in`, and the CEL macros OpenFGA's users rely on.
+3. Inline `$expression` conditions.
+4. Error messages identical to upstream's (codes already are).

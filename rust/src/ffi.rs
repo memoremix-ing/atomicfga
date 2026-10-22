@@ -147,3 +147,14 @@ pub unsafe extern "C" fn afc_compile_model(
         Err(e) => json!({"undecided": format!("options: {e}")}),
     }))
 }
+
+/// The strategy table derived for a model (protojson): `{"alternatives":
+/// [...]}` or `{"error": ...}`.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn afc_model_alternatives(json: *const u8, len: usize) -> AfcBuf {
+    let json = bytes(json, len);
+    buf(guarded(|| crate::alternatives_json(json)))
+}

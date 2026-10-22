@@ -197,7 +197,7 @@ pub struct TypeDef {
 pub struct Model {
     pub types: HashMap<String, TypeDef>,
     /// Nodes OpenFGA's planner may resolve with its recursive or weight-2
-    /// strategies instead of the default one (see [`Model::alternatives`]).
+    /// strategies instead of the default one (see [`crate::weighted`]).
     alternatives: HashSet<String>,
     pub conditions: HashMap<String, Condition>,
     graph: Graph,
@@ -273,7 +273,7 @@ fn collect_tuplesets(r: &Rewrite, out: &mut HashSet<String>) {
 impl Model {
     /// Decodes a model. An error is a refusal reason: the model uses
     /// something this port does not implement.
-    pub fn from_json(json: &[u8], alternatives: HashSet<String>) -> Result<Model, String> {
+    pub fn from_json(json: &[u8]) -> Result<Model, String> {
         let m: ModelJson = serde_json::from_slice(json).map_err(|e| format!("model JSON: {e}"))?;
         // typesystem.IsSchemaVersionSupported
         if m.schema_version != "1.1" && m.schema_version != "1.2" {
@@ -322,17 +322,25 @@ impl Model {
             conditions.insert(key.clone(), Condition::new(c));
         }
         let graph = Graph::build(&m.type_definitions, &types)?;
-        Ok(Model {
+        let mut model = Model {
             types,
             conditions,
             graph,
-            alternatives,
-        })
+            alternatives: HashSet::new(),
+        };
+        model.alternatives = crate::weighted::alternatives(&model);
+        Ok(model)
     }
 
     /// Whether OpenFGA may resolve a tuple-to-userset node with another
-    /// strategy. Keys are computed by the host with OpenFGA's own
-    /// `TTUUseWeight2Resolver`/`TTUUseRecursiveResolver`.
+    /// strategy (`TTUUseWeight2Resolver`/`TTUUseRecursiveResolver`).
+    /// The strategy table, sorted.
+    pub fn alternatives(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.alternatives.iter().cloned().collect();
+        v.sort();
+        v
+    }
+
     pub fn ttu_alternative(
         &self,
         object_type: &str,

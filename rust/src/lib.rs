@@ -21,6 +21,7 @@ mod outcome;
 mod resolve;
 mod strings;
 mod validate;
+mod weighted;
 
 use exec::{poll_once, BoxFut, Io, IoRef, ReadReq};
 use model::{Model, RefKind};
@@ -43,6 +44,15 @@ pub fn compile_json(json: &[u8], options: compile::Options) -> Value {
             json!({"invalid": {"code": code, "message": message}})
         }
         compile::Outcome::Undecided(why) => json!({"undecided": why}),
+    }
+}
+
+/// The strategy table the port derives for a model (see [`weighted`]):
+/// `{"alternatives": [...]}` or `{"error": ...}`.
+pub fn alternatives_json(model: &[u8]) -> Value {
+    match Model::from_json(model) {
+        Ok(m) => json!({"alternatives": m.alternatives()}),
+        Err(e) => json!({"error": e}),
     }
 }
 
@@ -152,16 +162,14 @@ impl Engine {
         self.models.lock().unwrap().contains_key(id)
     }
 
-    /// Decodes and caches a model: `{"model": <protojson with proto field
-    /// names>, "alternatives": [...]}`. A model this port cannot evaluate is
-    /// cached as a refusal reason.
+    /// Decodes, compiles and caches a model: `{"model": <protojson with
+    /// proto field names>}`. A model this port cannot evaluate is cached as a
+    /// refusal reason.
     pub fn load_model(&self, json: &[u8]) -> Result<String, String> {
         #[derive(Deserialize)]
         struct Load {
             model: Box<serde_json::value::RawValue>,
-            #[serde(default)]
-            alternatives: Option<HashSet<String>>,
-            /// Set when the host could not analyze the model.
+            /// Set when the host could not provide the model.
             #[serde(default)]
             refuse: Option<String>,
         }
@@ -185,9 +193,7 @@ impl Engine {
                 Err(format!("invalid model: {message}"))
             }
             // Valid, or valid as far as this port decides (OpenFGA stored it).
-            (None, _) => {
-                Model::from_json(model, load.alternatives.unwrap_or_default()).map(Arc::new)
-            }
+            (None, _) => Model::from_json(model).map(Arc::new),
         };
         self.models.lock().unwrap().insert(id.clone(), m);
         Ok(id)
