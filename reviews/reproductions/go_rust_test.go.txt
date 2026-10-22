@@ -1,0 +1,55 @@
+//go:build rustcheck
+
+package review_test
+
+import (
+	fga "github.com/memoremix-ing/atomicfga"
+	"github.com/memoremix-ing/atomicfga/internal/testdb"
+	pb "github.com/openfga/api/proto/openfga/v1"
+	parser "github.com/openfga/language/pkg/go/transformer"
+	"github.com/openfga/openfga/pkg/server"
+	"google.golang.org/grpc/status"
+	"testing"
+)
+
+func TestRustHonorsConfiguredDepth(t *testing.T) {
+	db := testdb.Open(t, fga.SQLite)
+	e, err := fga.New(fga.SQLite, fga.WithServerOptions(server.WithResolveNodeLimit(1)))
+	must(t, err)
+	defer e.Close()
+	tx, _, rollback := db.Begin(t, false)
+	defer rollback()
+	s := e.Session(tx)
+	st, err := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "review"})
+	must(t, err)
+	m := parser.MustTransformDSLToProto(`model
+  schema 1.1
+type user
+type group
+  relations
+    define member: [group2#member]
+type group2
+  relations
+    define member: [user]
+type doc
+  relations
+    define viewer: [group#member]
+`)
+	mr, err := s.WriteAuthorizationModel(ctx, &pb.WriteAuthorizationModelRequest{
+		StoreId: st.GetId(), SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions(),
+	})
+	must(t, err)
+	_, err = s.Write(ctx, &pb.WriteRequest{StoreId: st.GetId(), Writes: &pb.WriteRequestWrites{TupleKeys: []*pb.TupleKey{
+		{Object: "doc:1", Relation: "viewer", User: "group:g#member"},
+		{Object: "group:g", Relation: "member", User: "group2:g#member"},
+		{Object: "group2:g", Relation: "member", User: "user:anne"},
+	}}})
+	must(t, err)
+	req := &pb.CheckRequest{StoreId: st.GetId(), AuthorizationModelId: mr.GetAuthorizationModelId(),
+		TupleKey: &pb.CheckRequestTupleKey{Object: "doc:1", Relation: "viewer", User: "user:anne"}}
+	want, werr := s.Check(ctx, req)
+	got, gerr := s.RustCheck(ctx, req)
+	if status.Code(werr) != status.Code(gerr) || want.GetAllowed() != got.GetAllowed() {
+		t.Fatalf("configured depth=1: Go allowed=%v error=%v; Rust allowed=%v error=%v", want.GetAllowed(), werr, got.GetAllowed(), gerr)
+	}
+}

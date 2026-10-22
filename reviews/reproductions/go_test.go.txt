@@ -1,0 +1,230 @@
+// Review probes: intentionally fail while the reported defects remain.
+// Kept as .txt so ordinary project test discovery is unaffected.
+package review_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"testing"
+
+	fga "github.com/memoremix-ing/atomicfga"
+	"github.com/memoremix-ing/atomicfga/internal/bind"
+	"github.com/memoremix-ing/atomicfga/internal/testdb"
+	pb "github.com/openfga/api/proto/openfga/v1"
+	parser "github.com/openfga/language/pkg/go/transformer"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const dsl = `model
+  schema 1.1
+type user
+type doc
+  relations
+    define viewer: [user]
+`
+
+var ctx = context.Background()
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func model(t *testing.T, s *fga.Session, store string) string {
+	t.Helper()
+	m := parser.MustTransformDSLToProto(dsl)
+	r, err := s.WriteAuthorizationModel(ctx, &pb.WriteAuthorizationModelRequest{
+		StoreId: store, SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions(),
+	})
+	must(t, err)
+	return r.GetAuthorizationModelId()
+}
+
+func check(s *fga.Session, store, id string) (*pb.CheckResponse, error) {
+	return s.Check(ctx, &pb.CheckRequest{StoreId: store, AuthorizationModelId: id,
+		TupleKey: &pb.CheckRequestTupleKey{Object: "doc:1", Relation: "viewer", User: "user:anne"}})
+}
+
+func TestModelSavepointRollback(t *testing.T) {
+	for _, d := range testdb.Dialects() {
+		for _, b := range testdb.Backends(d) {
+			t.Run(fmt.Sprintf("%s/%s", d, b), func(t *testing.T) {
+				db := testdb.Open(t, d)
+				e, err := fga.New(d)
+				must(t, err)
+				defer e.Close()
+				tx, _, rollback := db.Begin(t, b.Pgx)
+				defer rollback()
+				s := e.Session(tx)
+				st, err := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "review"})
+				must(t, err)
+				_, err = tx.Exec(ctx, "SAVEPOINT app", nil)
+				must(t, err)
+				id := model(t, s, st.GetId())
+				_, err = check(s, st.GetId(), id)
+				must(t, err) // fill shared model caches
+				_, err = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT app", nil)
+				must(t, err)
+				models, err := s.ReadAuthorizationModels(ctx, &pb.ReadAuthorizationModelsRequest{StoreId: st.GetId()})
+				must(t, err)
+				if len(models.GetAuthorizationModels()) != 0 {
+					t.Fatal("model is still physically present")
+				}
+				_, err = check(e.Session(tx), st.GetId(), id)
+				if status.Code(err) != codes.Code(pb.ErrorCode_authorization_model_not_found) {
+					t.Errorf("rolled-back model accepted: error = %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestModelOutsideSnapshot(t *testing.T) {
+	db := testdb.Open(t, fga.SQLite)
+	e, err := fga.New(fga.SQLite)
+	must(t, err)
+	defer e.Close()
+	tx, commit, rollback := db.Begin(t, false)
+	defer rollback()
+	s := e.Session(tx)
+	st, err := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "review"})
+	must(t, err)
+	model(t, s, st.GetId())
+	must(t, commit())
+	old, err := db.Reader.BeginTx(ctx, nil)
+	must(t, err)
+	defer old.Rollback()
+	var n int
+	must(t, old.QueryRowContext(ctx, "SELECT count(*) FROM authorization_model").Scan(&n)) // pin WAL snapshot
+	tx, commit, rollback = db.Begin(t, false)
+	defer rollback()
+	id := model(t, e.Session(tx), st.GetId())
+	must(t, commit())
+	fresh, done, err := db.BeginReader(ctx, false)
+	must(t, err)
+	_, err = check(e.Session(fresh), st.GetId(), id)
+	must(t, err) // mark globally committed
+	must(t, done())
+	must(t, old.QueryRowContext(ctx, "SELECT count(*) FROM authorization_model WHERE authorization_model_id = ?", id).Scan(&n))
+	if n != 0 {
+		t.Fatal("old snapshot unexpectedly sees new model")
+	}
+	_, err = check(e.Session(fga.SQLTx(old)), st.GetId(), id)
+	if status.Code(err) != codes.Code(pb.ErrorCode_authorization_model_not_found) {
+		t.Errorf("model absent from snapshot accepted: error = %v", err)
+	}
+}
+
+type busyBackend struct{ calls int }
+
+func (b *busyBackend) Query(context.Context, string, []any) (*fga.Result, error) {
+	b.calls++
+	return nil, errors.New("turso: database is busy")
+}
+func (b *busyBackend) Exec(context.Context, string, []any) (int64, error) { b.calls++; return 1, nil }
+
+func TestTursoAbortIsLatched(t *testing.T) {
+	b := &busyBackend{}
+	s := bind.NewSession()
+	call := s.Call(bind.TursoErrors(b))
+	defer call.Finish()
+	db := bind.OpenDB()
+	defer db.Close()
+	c := bind.WithCall(ctx, call)
+	_, err := db.QueryContext(c, "SELECT busy")
+	if !errors.Is(err, fga.ErrTransactionAborted) {
+		t.Fatalf("unexpected translation: %v", err)
+	}
+	if s.Aborted() == nil {
+		t.Error("translated Turso busy error did not poison transaction state")
+	}
+	_, err = db.ExecContext(c, "INSERT after_abort")
+	if !errors.Is(err, fga.ErrTransactionAborted) || b.calls != 1 {
+		t.Errorf("statement reached aborted backend: calls=%d, error=%v", b.calls, err)
+	}
+}
+
+func TestRepeatableReadDoesNotSerializeCheckAndAct(t *testing.T) {
+	for _, b := range testdb.Backends(fga.Postgres) {
+		for _, isolation := range []sql.IsolationLevel{sql.LevelRepeatableRead, sql.LevelSerializable} {
+			t.Run(fmt.Sprintf("%s/%s", b, isolation), func(t *testing.T) {
+				db := testdb.Open(t, fga.Postgres)
+				db.Isolation = isolation
+				e, err := fga.New(fga.Postgres)
+				must(t, err)
+				defer e.Close()
+				_, err = db.SQL.Exec("CREATE TABLE review_doc (id INT PRIMARY KEY, edits INT); INSERT INTO review_doc VALUES (1, 0)")
+				must(t, err)
+				seed, commit, rollback := db.Begin(t, b.Pgx)
+				defer rollback()
+				s := e.Session(seed)
+				st, err := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "review"})
+				must(t, err)
+				id := model(t, s, st.GetId())
+				_, err = s.Write(ctx, &pb.WriteRequest{StoreId: st.GetId(), Writes: &pb.WriteRequestWrites{TupleKeys: []*pb.TupleKey{{Object: "doc:1", Relation: "viewer", User: "user:anne"}}}})
+				must(t, err)
+				must(t, commit())
+
+				edit, commitEdit, rollbackEdit := db.Begin(t, b.Pgx)
+				defer rollbackEdit()
+				r, err := check(e.Session(edit), st.GetId(), id)
+				must(t, err)
+				if !r.GetAllowed() {
+					t.Fatal("baseline grant missing")
+				}
+				revoke, commitRevoke, rollbackRevoke := db.Begin(t, b.Pgx)
+				defer rollbackRevoke()
+				rows, err := revoke.Query(ctx, "SELECT edits FROM review_doc WHERE id=1", nil)
+				must(t, err)
+				if fmt.Sprint(rows.Rows[0][0]) != "0" {
+					t.Fatal("unexpected edit before revoke")
+				}
+				_, err = e.Session(revoke).Write(ctx, &pb.WriteRequest{StoreId: st.GetId(), Deletes: &pb.WriteRequestDeletes{TupleKeys: []*pb.TupleKeyWithoutCondition{{Object: "doc:1", Relation: "viewer", User: "user:anne"}}}})
+				must(t, err)
+				must(t, commitRevoke())
+				_, editErr := edit.Exec(ctx, "UPDATE review_doc SET edits=edits+1 WHERE id=1", nil)
+				if editErr == nil {
+					editErr = commitEdit()
+				}
+				if editErr == nil {
+					t.Fatal("both committed: edit read grant, revoke read edits=0; neither serial order explains both observations")
+				}
+				var state interface{ SQLState() string }
+				if !errors.As(editErr, &state) || state.SQLState() != "40001" {
+					t.Fatalf("unexpected error instead of serialization failure: %v", editErr)
+				}
+				t.Log("database rejected the nonserializable history with SQLSTATE 40001")
+			})
+		}
+	}
+}
+
+func TestSQLiteRollbackTriggerMustPoisonTransaction(t *testing.T) {
+	db := testdb.Open(t, fga.SQLite)
+	db.SQL.SetMaxOpenConns(1)
+	_, err := db.SQL.Exec("CREATE TRIGGER review_rollback BEFORE INSERT ON store WHEN NEW.name='rollback' BEGIN SELECT RAISE(ROLLBACK, 'review rollback'); END")
+	must(t, err)
+	e, err := fga.New(fga.SQLite)
+	must(t, err)
+	defer e.Close()
+	tx, err := fga.BeginImmediate(ctx, db.SQL)
+	must(t, err)
+	defer tx.Rollback()
+	s := e.Session(fga.SQLTx(tx))
+	_, first := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "rollback"})
+	if first == nil {
+		t.Fatal("failed to force trigger rollback")
+	}
+	t.Logf("first CreateStore error: %v", first)
+	_, second := s.CreateStore(ctx, &pb.CreateStoreRequest{Name: "after-rollback"})
+	var count int
+	must(t, db.Reader.QueryRowContext(ctx, "SELECT count(*) FROM store WHERE name='after-rollback'").Scan(&count))
+	if !errors.Is(second, fga.ErrTransactionAborted) || count != 0 {
+		t.Fatalf("statement after trigger rollback: error=%v; externally visible stores before caller commit=%d", second, count)
+	}
+}
