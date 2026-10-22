@@ -19,6 +19,7 @@ bool afc_engine_has_model(const afc_engine *e, const uint8_t *id, size_t len);
 afc_buf afc_engine_load_model(const afc_engine *e, const uint8_t *json, size_t len);
 afc_task *afc_check_new(const afc_engine *e, const uint8_t *model, size_t model_len, const uint8_t *req, size_t req_len);
 afc_buf afc_check_step(afc_task *t, const uint8_t *answers, size_t len);
+afc_buf afc_compile_model(const uint8_t *json, size_t len, const uint8_t *options, size_t options_len);
 void afc_check_free(afc_task *t);
 void afc_buf_free(afc_buf b);
 */
@@ -409,4 +410,55 @@ func tupleRow(k *openfgav1.TupleKey) ([]any, error) {
 		}
 	}
 	return row, nil
+}
+
+// CompileOptions are the OpenFGA server settings that change which models
+// are accepted.
+type CompileOptions struct {
+	// InlineExpressions is OpenFGA's "inline_expressions" experimental flag.
+	InlineExpressions bool `json:"inline_expressions"`
+}
+
+// RustCompileModel decides with the Rust model compiler whether OpenFGA's
+// WriteAuthorizationModel, configured as opts says, accepts req (its store
+// ID aside). It returns nil if so, an error with OpenFGA's status code if
+// not, and an error matching [ErrRustRefused] if the compiler cannot decide
+// (a condition outside its CEL subset).
+func RustCompileModel(req *openfgav1.WriteAuthorizationModelRequest, opts CompileOptions) error {
+	js, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(req)
+	if err != nil {
+		return serverErrors.HandleError("", err)
+	}
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return serverErrors.HandleError("", err)
+	}
+	var verdict struct {
+		Valid   bool `json:"valid"`
+		Invalid *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"invalid"`
+		Undecided *string `json:"undecided"`
+	}
+	if err := json.Unmarshal(take(C.afc_compile_model(ptr(js), C.size_t(len(js)), ptr(optsJSON), C.size_t(len(optsJSON)))), &verdict); err != nil {
+		return serverErrors.HandleError("", err)
+	}
+	switch {
+	case verdict.Valid:
+		return nil
+	case verdict.Undecided != nil:
+		return refusedError{*verdict.Undecided}
+	case verdict.Invalid == nil:
+		return refusedError{"no verdict"}
+	}
+	switch verdict.Invalid.Code {
+	case "invalid_argument":
+		return status.Error(codes.InvalidArgument, verdict.Invalid.Message)
+	case "exceeded_entity_limit":
+		return status.Error(codes.Code(openfgav1.ErrorCode_exceeded_entity_limit), verdict.Invalid.Message)
+	case "validation_error":
+		return serverErrors.ValidationError(errors.New(verdict.Invalid.Message))
+	}
+	return serverErrors.InvalidAuthorizationModelInput(errors.New(verdict.Invalid.Message))
 }

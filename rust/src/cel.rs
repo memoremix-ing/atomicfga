@@ -600,7 +600,8 @@ struct Program {
 const MAX_COST: u64 = 100;
 
 impl Program {
-    fn compile(src: &str, params: &BTreeMap<String, Ty>) -> Result<Program, String> {
+    /// Parses and type-checks `src`, returning its type.
+    fn typed(src: &str, params: &BTreeMap<String, Ty>) -> Result<(Expr, Ty), String> {
         let mut p = Parser {
             src: src.as_bytes(),
             pos: 0,
@@ -611,7 +612,13 @@ impl Program {
         if p.pos != p.src.len() {
             return Err(format!("unsupported CEL at offset {}", p.pos));
         }
-        if check(&expr, params)? != Ty::Bool {
+        let ty = check(&expr, params)?;
+        Ok((expr, ty))
+    }
+
+    fn compile(src: &str, params: &BTreeMap<String, Ty>) -> Result<Program, String> {
+        let (expr, ty) = Program::typed(src, params)?;
+        if ty != Ty::Bool {
             return Err("condition is not a bool expression".into());
         }
         let nodes = count(&expr);
@@ -891,6 +898,181 @@ fn call(f: Func, args: Vec<Val>, cost: &mut u64) -> Outcome<Val> {
         }
         _ => refuse("call"),
     }
+}
+
+/// Whether OpenFGA accepts a condition when a model is written
+/// (`EvaluableCondition.Compile`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Verdict {
+    Valid,
+    Invalid(String),
+    /// Outside the subset this port decides.
+    Undecided(String),
+}
+
+/// `types.DecodeParameterType`, recursively; `Err` fails compilation.
+fn decode_param(p: &ParamTypeJson) -> Result<Option<Ty>, String> {
+    let name = match &p.type_name {
+        Value::String(s) => s.as_str(),
+        Value::Null => "TYPE_NAME_UNSPECIFIED",
+        other => return Err(format!("parameter type {other}")),
+    };
+    let (ty, generics) = match name {
+        "TYPE_NAME_BOOL" => (Some(Ty::Bool), 0),
+        "TYPE_NAME_INT" => (Some(Ty::Int), 0),
+        "TYPE_NAME_UINT" => (Some(Ty::Uint), 0),
+        "TYPE_NAME_DOUBLE" => (Some(Ty::Double), 0),
+        "TYPE_NAME_STRING" => (Some(Ty::String), 0),
+        "TYPE_NAME_TIMESTAMP" => (Some(Ty::Timestamp), 0),
+        "TYPE_NAME_DURATION" => (Some(Ty::Duration), 0),
+        "TYPE_NAME_IPADDRESS" => (Some(Ty::Ip), 0),
+        "TYPE_NAME_ANY" => (None, 0),
+        "TYPE_NAME_LIST" | "TYPE_NAME_MAP" => (None, 1),
+        other => return Err(format!("unknown condition parameter type {other}")),
+    };
+    if p.generic_types.len() != generics {
+        return Err(format!(
+            "type {name} requires {generics} generic types; found {}",
+            p.generic_types.len()
+        ));
+    }
+    for g in &p.generic_types {
+        decode_param(g)?;
+    }
+    Ok(ty)
+}
+
+const CEL_RESERVED: &[&str] = &[
+    "as",
+    "break",
+    "const",
+    "continue",
+    "else",
+    "false",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "let",
+    "loop",
+    "package",
+    "namespace",
+    "null",
+    "return",
+    "true",
+    "var",
+    "void",
+    "while",
+    "int",
+    "uint",
+    "double",
+    "bool",
+    "string",
+    "bytes",
+    "list",
+    "map",
+    "null_type",
+    "type",
+    "dyn",
+    "timestamp",
+    "duration",
+    "ipaddress",
+    "size",
+    "has",
+    "all",
+    "exists",
+    "exists_one",
+    "filter",
+    "matches",
+    "in_cidr",
+];
+
+fn plain_identifier(s: &str) -> bool {
+    let mut cs = s.chars();
+    matches!(cs.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !CEL_RESERVED.contains(&s)
+}
+
+/// Whether cel-go, as OpenFGA configures it, compiles the condition: its
+/// parameter types decode, and the expression type-checks with a bool
+/// result. Expressions outside the supported subset are undecided, as are
+/// constant subexpressions this port cannot fold exactly as cel-go would.
+pub(crate) fn compile_verdict(c: &ConditionJson) -> Verdict {
+    let mut types = BTreeMap::new();
+    let mut opaque = false;
+    for (name, p) in &c.parameters {
+        match decode_param(p) {
+            Err(e) => {
+                return Verdict::Invalid(format!(
+                    "failed to decode parameter type for parameter '{name}': {e}"
+                ))
+            }
+            Ok(Some(t)) => {
+                types.insert(name.clone(), t);
+            }
+            Ok(None) => opaque = true,
+        }
+    }
+    if c.expression.trim().is_empty() {
+        return Verdict::Invalid("empty expression".into());
+    }
+    if let Some(name) = c.parameters.keys().find(|k| !plain_identifier(k)) {
+        // How cel-go declares such a variable is not modelled here.
+        return Verdict::Undecided(format!("parameter name {name:?}"));
+    }
+    let undecided = |why: String| {
+        let note = if opaque {
+            " (with parameters of unsupported types)"
+        } else {
+            ""
+        };
+        Verdict::Undecided(format!("{why}{note}"))
+    };
+    match Program::typed(&c.expression, &types) {
+        Err(e) => match e.strip_prefix("unsupported CEL: undeclared identifier ") {
+            // Not a parameter of any type, nor a name CEL predeclares.
+            Some(name) if plain_identifier(name) && !c.parameters.contains_key(name) => {
+                Verdict::Invalid(format!("undeclared reference to '{name}'"))
+            }
+            _ => undecided(e),
+        },
+        Ok((_, ty)) if ty != Ty::Bool => Verdict::Invalid(format!(
+            "expected a bool condition expression output, but got '{ty:?}'"
+        )),
+        Ok((expr, _)) => match constant_ok(&expr) {
+            Ok(_) => Verdict::Valid,
+            Err(e) => undecided(e),
+        },
+    }
+}
+
+/// cel-go folds constant subexpressions when the program is planned; one
+/// that fails (`1 / 0`, `timestamp("x")`) may fail compilation. Accept only
+/// constants this port evaluates cleanly.
+fn constant_ok(e: &Expr) -> Result<bool, String> {
+    let children: Vec<&Expr> = match e {
+        Expr::Lit(_) => return Ok(true),
+        Expr::Ident(_) => return Ok(false),
+        Expr::Not(a) | Expr::Neg(a) => vec![a],
+        Expr::Bin(_, a, b) | Expr::And(a, b) | Expr::Or(a, b) => vec![a, b],
+        Expr::Cond(a, b, c) => vec![a, b, c],
+        Expr::Call(_, args) => args.iter().collect(),
+    };
+    let mut constant = true;
+    for c in children {
+        constant &= constant_ok(c)?;
+    }
+    if constant {
+        let mut cost = 0;
+        if let Err(b) = eval(e, &BTreeMap::new(), &mut cost) {
+            return Err(format!(
+                "constant subexpression does not fold cleanly: {b:?}"
+            ));
+        }
+    }
+    Ok(constant)
 }
 
 // ---------------------------------------------------------------------------

@@ -39,11 +39,12 @@ rust:
 	cd rust && cargo build --release
 
 # Conformance gates: Rust unit tests, OpenFGA's Check suites and matrices,
-# and the Hegel differential, each comparing every Rust answer with
-# OpenFGA's Check in the same transaction.
+# the Hegel differentials and edge cases, comparing every Rust check with
+# OpenFGA's Check in the same transaction, and every compiled model with
+# OpenFGA's WriteAuthorizationModel.
 test-rust: rust
 	cd rust && cargo test --release
-	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck' ./tests/
+	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestHegelRustCompileModel|TestRustCompileEdgeCases' ./tests/
 
 bench-rust: rust
 	ATOMICFGA_WASMFGA=1 $(GO) test -tags rustcheck -count=1 -timeout 120m -run TestWasmfgaWorkloads ./bench/

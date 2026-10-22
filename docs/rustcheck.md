@@ -118,11 +118,80 @@ version of the gates; the cycle and depth-chain seeds and
 `TestRustEdgeCases` were added until they failed. Those seeds also found the
 fast-path nondeterminism above, in the unmutated port.
 
+## Model compiler
+
+`src/compile.rs` decides, from a model's JSON alone (a
+`WriteAuthorizationModelRequest` body or an `AuthorizationModel`, in
+protojson), whether OpenFGA's `WriteAuthorizationModel` accepts it, and with
+which error code:
+
+1. the request's protobuf validation rules (`invalid_argument`): name
+   patterns (RE2 semantics: lengths in characters, ASCII whitespace),
+   lengths in bytes, required fields, enum values, item counts;
+2. the `inline_expressions` flag check (`validation_error`), the type count
+   limit and the model size limit (`exceeded_entity_limit`);
+3. `typesystem.NewAndValidate` (`invalid_authorization_model`): schema
+   version, duplicate and reserved names, each relation's rewrite, type
+   restrictions, entrypoints and computed-relation cycles, then conditions
+   (parameter type decoding, and compilation of the expression).
+
+Within each stage every failure has the same code, so the verdict cannot
+depend on which failure OpenFGA happens to report. A condition expression
+outside the CEL subset (or with a constant subexpression the port does not
+fold exactly as cel-go does, or a parameter named like a CEL keyword) is
+*undecided*, unless another check fails for certain. The model size limit
+is decided only for models whose compact JSON is under 128 KiB (the protobuf
+encoding is at most about twice as large); larger ones are undecided.
+
+The evaluator loads every model through the compiler, so it only ever
+evaluates models that pass OpenFGA's checks. `RustCompileModel` exposes it to
+Go; `afc_compile_model` to any other host.
+
+Porting it surfaced two upstream quirks, both reproduced deliberately:
+
+- **A valid model can be rejected.** `hasEntrypoints` clones its visited map
+  shallowly, so marks made while exploring one operand leak into sibling
+  operands. `tests/testdata/entrypoints-aliasing.json` is rejected for "no
+  entrypoints" although every relation has one. The port reproduces the
+  sharing (`Rc<RefCell<…>>` inner maps); a brute-force search over random
+  models against a deep-copying variant found the witness.
+- **Union arity is checked only where the search reaches.** A union with one
+  operand is rejected, unless an earlier operand already provided an
+  entrypoint, in which case the model is accepted.
+
+**Gates.** `TestHegelRustCompileModel` draws models at three levels of
+damage (well-formed with references to defined types and relations; with
+semantic faults; with protobuf faults), at three fault densities so that a
+model often carries a single fault. It compares each verdict with OpenFGA's,
+and reports the mix of OpenFGA's rejection reasons, so that a check the
+generator never triggers shows up. `TestRustCompileEdgeCases` pins the two
+quirks above, arity cases and name lengths at the limits.
+
+| gate | models | decided by Rust | wrong | undecided |
+|---|---:|---:|---:|---:|
+| `TestHegelRustCompileModel` (10,000 cases) | 26,047 | 25,918 | **0** | 129 |
+| `TestRustCompileEdgeCases` | 8 | 8 | **0** | 0 |
+
+Decided verdicts: about 1,800 valid, 20,000 `invalid_authorization_model`
+(every `NewAndValidate` rule triggered), 2,400 `invalid_argument`, 1,500
+`validation_error` and some `exceeded_entity_limit`. The undecided ones are
+parameters named like CEL keywords or not named as identifiers, and
+expressions using macros or lists.
+
+**Mutation testing.** Eight bugs were planted one at a time: no
+shared-map aliasing in `hasEntrypoints`, unions of one operand accepted, no
+computed-cycle check, a tuple-to-userset requiring *every* tupleset type to
+define the computed relation, name lengths counted in bytes, a
+tuple-to-userset counted as directly assignable, no condition key/name check,
+and lists decoded without their generic type. The random gate initially
+missed four. Lowering fault density, adding boundary names and adding the
+edge cases made the gates catch all eight.
+
 ## Size and speed
 
-**WebAssembly.** `make wasm-size` builds the evaluator for
-`wasm32-unknown-unknown` (`opt-level = "z"`, no `wasm-opt`): **441 KiB, 156
-KiB gzipped**, against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator and
+**WebAssembly.** `make wasm-size` builds the evaluator and the model
+compiler for `wasm32-unknown-unknown` (`opt-level = "z"`, no `wasm-opt`):
+**556 KiB, 183 KiB gzipped** (the compiler adds 27 KiB gzipped), against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator and
 44.6 MiB / 8.7 MiB for its Go build. The difference is mostly the condition
 evaluator (no CEL library, no regex engine, no chrono) and the lack of an
 embedded datastore. The module exports the C ABI of `src/ffi.rs`; a
@@ -162,9 +231,11 @@ A prototype: no wrong answer in about 39,000 compared checks, at the cost of
 refusing roughly one check in four of upstream's suites. The next steps,
 in order of refusals removed:
 
-1. Port the recursive and weight-2 strategies (and the weighted graph that
+1. Persist compiled models (with the precomputed strategy table) next to
+   the model, so a host without OpenFGA's Go typesystem can evaluate.
+2. Port the recursive and weight-2 strategies (and the weighted graph that
    selects them) as further outcome-set producers, replacing the widening
    rule. This removes nearly all refusals in upstream's suites.
-2. List and map parameters, `in`, and the CEL macros OpenFGA's users rely on.
-3. Inline `$expression` conditions.
-4. Error messages identical to upstream's (codes already are).
+3. List and map parameters, `in`, and the CEL macros OpenFGA's users rely on.
+4. Inline `$expression` conditions.
+5. Error messages identical to upstream's (codes already are).

@@ -124,3 +124,26 @@ pub unsafe extern "C" fn afc_buf_free(b: AfcBuf) {
         drop(Vec::from_raw_parts(b.ptr, b.len, b.cap));
     }
 }
+
+/// Decides whether OpenFGA accepts a model (a WriteAuthorizationModelRequest
+/// body in protojson) under `options` (`{"inline_expressions": bool}`, or
+/// empty). Returns `{"valid": true}`, `{"invalid": {"code": ...,
+/// "message": ...}}` or `{"undecided": "..."}`.
+///
+/// # Safety
+/// The pointers must point to readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn afc_compile_model(
+    json: *const u8,
+    len: usize,
+    options: *const u8,
+    options_len: usize,
+) -> AfcBuf {
+    let json = bytes(json, len);
+    let options = bytes(options, options_len);
+    buf(guarded(|| match serde_json::from_slice(options) {
+        Ok(o) => crate::compile_json(json, o),
+        Err(_) if options.is_empty() => crate::compile_json(json, Default::default()),
+        Err(e) => json!({"undecided": format!("options: {e}")}),
+    }))
+}

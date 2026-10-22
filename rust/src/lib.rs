@@ -13,6 +13,7 @@
 //! conformance gates; wrong answers fail them.
 
 mod cel;
+mod compile;
 mod exec;
 mod ffi;
 mod model;
@@ -33,6 +34,17 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use validate::{validate_struct, validate_tuple_for_write, validate_user_object_relation, VErr};
+
+/// The model compiler's verdict as JSON (see [`compile::compile`]).
+pub fn compile_json(json: &[u8], options: compile::Options) -> Value {
+    match compile::compile(json, options) {
+        compile::Outcome::Valid => json!({"valid": true}),
+        compile::Outcome::Invalid { code, message } => {
+            json!({"invalid": {"code": code, "message": message}})
+        }
+        compile::Outcome::Undecided(why) => json!({"undecided": why}),
+    }
+}
 
 /// An OpenFGA API error, by the gRPC error it maps to.
 #[derive(Clone, Debug, PartialEq)]
@@ -163,9 +175,19 @@ impl Engine {
         let id = serde_json::from_slice::<Id>(model)
             .map_err(|e| e.to_string())?
             .id;
-        let m = match load.refuse {
-            Some(why) => Err(why),
-            None => Model::from_json(model, load.alternatives.unwrap_or_default()).map(Arc::new),
+        // Stored models passed OpenFGA's checks under whatever flags it ran with.
+        let lenient = compile::Options {
+            inline_expressions: true,
+        };
+        let m = match (load.refuse, compile::compile(model, lenient)) {
+            (Some(why), _) => Err(why),
+            (None, compile::Outcome::Invalid { message, .. }) => {
+                Err(format!("invalid model: {message}"))
+            }
+            // Valid, or valid as far as this port decides (OpenFGA stored it).
+            (None, _) => {
+                Model::from_json(model, load.alternatives.unwrap_or_default()).map(Arc::new)
+            }
         };
         self.models.lock().unwrap().insert(id.clone(), m);
         Ok(id)
