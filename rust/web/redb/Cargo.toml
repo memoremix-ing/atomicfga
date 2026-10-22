@@ -1,0 +1,16 @@
+[package]
+name = "atomicfga-web-redb"
+description = "A redb store as a WebAssembly module: in memory, or persisted to the browser's OPFS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+atomicfga-check.workspace = true
+atomicfga-redb.workspace = true
+redb.workspace = true

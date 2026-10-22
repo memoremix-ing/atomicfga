@@ -1,34 +1,37 @@
-//! A [redb](https://www.redb.org) store for the evaluator: authorization
-//! models and tuples in the caller's redb transactions.
+//! OpenFGA's API (model writes, tuple writes, checks) over any
+//! [`crate::store::Store`]: the store keeps bytes, this layer decides.
 //!
-//! As with atomicfga's SQL sessions, the application owns the transaction:
-//! [`Fga::write_model`] and [`Fga::write`] take a `&WriteTransaction`, and
-//! [`Fga::check`] takes either a `&ReadTransaction` or a `&WriteTransaction`
-//! (seeing its uncommitted writes). Committing or aborting is up to the
-//! caller, so authorization data changes atomically with application data.
+//! The application owns the transaction the store wraps: [`Fga::write_model`]
+//! and [`Fga::write`] take a [`StoreMut`], and [`Fga::check`] a [`Store`]
+//! (which may be the same uncommitted write transaction). Committing or
+//! aborting is up to the caller, so authorization data changes atomically
+//! with application data.
 //!
 //! Requests and responses are OpenFGA's (protojson): models go through the
 //! model compiler, writes are validated as OpenFGA's `Write` validates them,
-//! and checks run on the sans-IO evaluator, whose reads are answered here
-//! as OpenFGA's SQL datastores answer them.
+//! and checks run on the sans-IO evaluator, whose reads are answered from the
+//! store as OpenFGA's SQL datastores answer them. Validation fails before
+//! anything is written; if the store itself fails midway, the caller should
+//! roll back.
 
 use crate::compile::{self, Outcome};
 use crate::exec::{Answer, ReadReq};
 use crate::model::RefKind;
+use crate::store::{Store, StoreMut};
 use crate::strings::*;
 use crate::validate::{validate_tuple_for_write, VErr};
 use crate::{Cond, Engine, Semantics, Tuple};
-use redb::{ReadTransaction, ReadableTable, TableDefinition, TableError, WriteTransaction};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 
-/// (store, object, relation, user) → condition (`{"name", "context"}`, or
-/// empty).
-const TUPLES: TableDefinition<(&str, &str, &str, &str), &[u8]> =
-    TableDefinition::new("atomicfga_tuples");
-/// (store, model ID) → the model in protojson.
-const MODELS: TableDefinition<(&str, &str), &[u8]> = TableDefinition::new("atomicfga_models");
+/// Encodes a tuple's condition as stored: `{"name", "context"}`, or nothing.
+pub fn encode_condition(c: Option<&Cond>) -> Vec<u8> {
+    c.map(|c| {
+        serde_json::to_vec(&json!({"name": c.name, "context": c.context})).unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
 
 /// OpenFGA defaults.
 const MAX_TUPLES_PER_WRITE: usize = 100;
@@ -64,142 +67,7 @@ fn ulid_ok(s: &str) -> bool {
         })
 }
 
-/// Read access to the tables, in either kind of transaction.
-pub trait Source {
-    fn with_tuples<R>(&self, f: impl FnOnce(&dyn TupleTable) -> R) -> Result<R, String>;
-    fn with_models<R>(&self, f: impl FnOnce(&dyn ModelTable) -> R) -> Result<R, String>;
-}
-
-pub trait TupleTable {
-    fn scan(
-        &self,
-        store: &str,
-        object: &str,
-        relation: &str,
-    ) -> Result<Vec<(String, Vec<u8>)>, String>;
-    fn get(
-        &self,
-        store: &str,
-        object: &str,
-        relation: &str,
-        user: &str,
-    ) -> Result<Option<Vec<u8>>, String>;
-}
-
-pub trait ModelTable {
-    fn get(&self, store: &str, id: &str) -> Result<Option<Vec<u8>>, String>;
-    fn latest(&self, store: &str) -> Result<Option<(String, Vec<u8>)>, String>;
-}
-
-struct Empty;
-
-impl TupleTable for Empty {
-    fn scan(&self, _: &str, _: &str, _: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
-        Ok(vec![])
-    }
-    fn get(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(None)
-    }
-}
-
-impl ModelTable for Empty {
-    fn get(&self, _: &str, _: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(None)
-    }
-    fn latest(&self, _: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        Ok(None)
-    }
-}
-
-impl<T: ReadableTable<(&'static str, &'static str, &'static str, &'static str), &'static [u8]>>
-    TupleTable for T
-{
-    fn scan(
-        &self,
-        store: &str,
-        object: &str,
-        relation: &str,
-    ) -> Result<Vec<(String, Vec<u8>)>, String> {
-        let mut out = vec![];
-        for row in self
-            .range((store, object, relation, "")..)
-            .map_err(|e| e.to_string())?
-        {
-            let (k, v) = row.map_err(|e| e.to_string())?;
-            let (s, o, r, u) = k.value();
-            if s != store || o != object || r != relation {
-                break;
-            }
-            out.push((u.to_string(), v.value().to_vec()));
-        }
-        Ok(out)
-    }
-    fn get(
-        &self,
-        store: &str,
-        object: &str,
-        relation: &str,
-        user: &str,
-    ) -> Result<Option<Vec<u8>>, String> {
-        Ok(ReadableTable::get(self, (store, object, relation, user))
-            .map_err(|e| e.to_string())?
-            .map(|v| v.value().to_vec()))
-    }
-}
-
-struct Models<T>(T);
-
-impl<T: ReadableTable<(&'static str, &'static str), &'static [u8]>> ModelTable for Models<T> {
-    fn get(&self, store: &str, id: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(self
-            .0
-            .get((store, id))
-            .map_err(|e| e.to_string())?
-            .map(|v| v.value().to_vec()))
-    }
-    fn latest(&self, store: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        let mut last = None;
-        for row in self.0.range((store, "")..).map_err(|e| e.to_string())? {
-            let (k, v) = row.map_err(|e| e.to_string())?;
-            let (s, id) = k.value();
-            if s != store {
-                break;
-            }
-            last = Some((id.to_string(), v.value().to_vec()));
-        }
-        Ok(last)
-    }
-}
-
-impl Source for ReadTransaction {
-    fn with_tuples<R>(&self, f: impl FnOnce(&dyn TupleTable) -> R) -> Result<R, String> {
-        match self.open_table(TUPLES) {
-            Ok(t) => Ok(f(&t)),
-            Err(TableError::TableDoesNotExist(_)) => Ok(f(&Empty)),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-    fn with_models<R>(&self, f: impl FnOnce(&dyn ModelTable) -> R) -> Result<R, String> {
-        match self.open_table(MODELS) {
-            Ok(t) => Ok(f(&Models(t))),
-            Err(TableError::TableDoesNotExist(_)) => Ok(f(&Empty)),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-}
-
-impl Source for WriteTransaction {
-    fn with_tuples<R>(&self, f: impl FnOnce(&dyn TupleTable) -> R) -> Result<R, String> {
-        let t = self.open_table(TUPLES).map_err(|e| e.to_string())?;
-        Ok(f(&t))
-    }
-    fn with_models<R>(&self, f: impl FnOnce(&dyn ModelTable) -> R) -> Result<R, String> {
-        let t = self.open_table(MODELS).map_err(|e| e.to_string())?;
-        Ok(f(&Models(t)))
-    }
-}
-
-fn decode_condition(bytes: &[u8]) -> Option<Cond> {
+pub fn decode_condition(bytes: &[u8]) -> Option<Cond> {
     if bytes.is_empty() {
         return None;
     }
@@ -230,7 +98,7 @@ fn userset_matches(user: &str, allowed: &[crate::RelRef]) -> bool {
     })
 }
 
-fn read(tuples: &dyn TupleTable, store: &str, r: &ReadReq) -> Answer {
+fn read(tuples: &impl Store, store: &str, r: &ReadReq) -> Answer {
     let tuple = |o: &str, rel: &str, u: String, c: &[u8]| Tuple {
         object: o.into(),
         relation: rel.into(),
@@ -243,12 +111,12 @@ fn read(tuples: &dyn TupleTable, store: &str, r: &ReadReq) -> Answer {
             relation,
             user,
         } => tuples
-            .get(store, object, relation, user)?
+            .tuple(store, object, relation, user)?
             .map(|c| tuple(object, relation, user.clone(), &c))
             .into_iter()
             .collect(),
         ReadReq::Read { object, relation } => tuples
-            .scan(store, object, relation)?
+            .tuples(store, object, relation)?
             .into_iter()
             .map(|(u, c)| tuple(object, relation, u, &c))
             .collect(),
@@ -257,7 +125,7 @@ fn read(tuples: &dyn TupleTable, store: &str, r: &ReadReq) -> Answer {
             relation,
             allowed,
         } => tuples
-            .scan(store, object, relation)?
+            .tuples(store, object, relation)?
             .into_iter()
             .filter(|(u, _)| userset_matches(u, allowed))
             .map(|(u, c)| tuple(object, relation, u, &c))
@@ -321,7 +189,8 @@ fn key_proto_ok(k: &KeyJson) -> bool {
             .is_none_or(|c| no_space(&c.name, 2, 256))
 }
 
-/// OpenFGA's API, over redb transactions.
+/// OpenFGA's API over a [`Store`]. It holds compiled models (by ID) and the
+/// server settings that matter; it holds no data.
 #[derive(Default)]
 pub struct Fga {
     engine: Engine,
@@ -330,19 +199,12 @@ pub struct Fga {
     pub inline_expressions: bool,
 }
 
-
 impl Fga {
     /// `WriteAuthorizationModel`, under a model ID the caller chose (a ULID:
     /// the latest model is the greatest ID). Returns `{"authorization_model_id"}`
     /// or `{"error": {code, message}}` (or `{"refused"}` when the model
     /// compiler cannot decide).
-    pub fn write_model(
-        &self,
-        tx: &WriteTransaction,
-        store: &str,
-        id: &str,
-        request: &[u8],
-    ) -> Value {
+    pub fn write_model(&self, tx: &impl StoreMut, store: &str, id: &str, request: &[u8]) -> Value {
         let options = compile::Options {
             inline_expressions: self.inline_expressions,
         };
@@ -361,12 +223,7 @@ impl Fga {
             m.insert("id".into(), json!(id));
         }
         let bytes = serde_json::to_vec(&model).unwrap_or_default();
-        let stored = (|| -> Result<(), String> {
-            let mut t = tx.open_table(MODELS).map_err(|e| e.to_string())?;
-            t.insert((store, id), bytes.as_slice())
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        })();
+        let stored = tx.put_model(store, id, &bytes);
         match stored {
             Ok(()) => json!({"authorization_model_id": id}),
             Err(e) => api_error("internal_error", e),
@@ -375,17 +232,13 @@ impl Fga {
 
     /// Resolves the request's model (or the latest), loading it into the
     /// evaluator. Returns its ID.
-    fn resolve_model(&self, tx: &impl Source, store: &str, id: &str) -> Result<String, Value> {
-        let found = tx
-            .with_models(|t| {
-                if id.is_empty() {
-                    t.latest(store)
-                } else {
-                    t.get(store, id).map(|m| m.map(|m| (id.to_string(), m)))
-                }
-            })
-            .and_then(|r| r)
-            .map_err(|e| api_error("internal_error", e))?;
+    fn resolve_model(&self, tx: &impl Store, store: &str, id: &str) -> Result<String, Value> {
+        let found = if id.is_empty() {
+            tx.latest_model(store)
+        } else {
+            tx.model(store, id).map(|m| m.map(|m| (id.to_string(), m)))
+        }
+        .map_err(|e| api_error("internal_error", e))?;
         let Some((id, model)) = found else {
             return Err(if id.is_empty() {
                 api_error(
@@ -415,7 +268,7 @@ impl Fga {
     /// Returns `{}` or `{"error": {code, message}}`; on an error nothing is
     /// changed. A write whose validity this port cannot decide (a condition
     /// parameter of an unsupported type) is `{"refused"}`.
-    pub fn write(&self, tx: &WriteTransaction, store: &str, request: &[u8]) -> Value {
+    pub fn write(&self, tx: &impl StoreMut, store: &str, request: &[u8]) -> Value {
         let req: WriteRequestJson = match serde_json::from_slice(request) {
             Ok(r) => r,
             Err(e) => return api_error("invalid_argument", format!("write request: {e}")),
@@ -561,11 +414,9 @@ impl Fga {
         }
         // Apply all or nothing: check first, then mutate.
         let applied = (|| -> Result<Option<Value>, String> {
-            let mut table = tx.open_table(TUPLES).map_err(|e| e.to_string())?;
             let mut deleting = vec![];
             for k in &deletes {
-                let exists =
-                    TupleTable::get(&table, store, &k.object, &k.relation, &k.user)?.is_some();
+                let exists = tx.tuple(store, &k.object, &k.relation, &k.user)?.is_some();
                 if !exists {
                     if on_missing_ignore {
                         continue;
@@ -579,17 +430,8 @@ impl Fga {
             }
             let mut writing = vec![];
             for t in &writes {
-                let encoded = t
-                    .condition
-                    .as_ref()
-                    .map(|c| {
-                        serde_json::to_vec(&json!({"name": c.name, "context": c.context}))
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-                if let Some(existing) =
-                    TupleTable::get(&table, store, &t.object, &t.relation, &t.user)?
-                {
+                let encoded = encode_condition(t.condition.as_ref());
+                if let Some(existing) = tx.tuple(store, &t.object, &t.relation, &t.user)? {
                     if on_duplicate_ignore {
                         // OpenFGA compares with proto.Equal against the stored
                         // tuple as read back, whose context is never absent (an
@@ -616,27 +458,10 @@ impl Fga {
                 writing.push((t, encoded));
             }
             for k in deleting {
-                table
-                    .remove((
-                        store,
-                        k.object.as_str(),
-                        k.relation.as_str(),
-                        k.user.as_str(),
-                    ))
-                    .map_err(|e| e.to_string())?;
+                tx.delete_tuple(store, &k.object, &k.relation, &k.user)?;
             }
             for (t, encoded) in writing {
-                table
-                    .insert(
-                        (
-                            store,
-                            t.object.as_str(),
-                            t.relation.as_str(),
-                            t.user.as_str(),
-                        ),
-                        encoded.as_slice(),
-                    )
-                    .map_err(|e| e.to_string())?;
+                tx.put_tuple(store, &t.object, &t.relation, &t.user, &encoded)?;
             }
             Ok(None)
         })();
@@ -651,7 +476,7 @@ impl Fga {
     /// reading the transaction's tuples.
     pub fn check(
         &self,
-        tx: &impl Source,
+        tx: &impl Store,
         store: &str,
         request: &[u8],
         semantics: Semantics,
@@ -700,15 +525,10 @@ impl Fga {
             Ok(id) => id,
             Err(e) => return e,
         };
-        let outcome = tx.with_tuples(|tuples| {
-            self.engine
-                .check_with(&model_id, request, semantics)
-                .run(|r| read(tuples, store, r))
-        });
-        let v = match outcome {
-            Ok(v) => v,
-            Err(e) => return api_error("internal_error", e),
-        };
+        let v = self
+            .engine
+            .check_with(&model_id, request, semantics)
+            .run(|r| read(tx, store, r));
         // The evaluator reports errors by kind; give them OpenFGA's codes.
         match v.get("error") {
             Some(e) => {
@@ -737,62 +557,42 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redb::{backends::InMemoryBackend, Database, ReadableDatabase};
+    use crate::store::MemoryStore;
 
     const MODEL: &str = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},
         {"type":"doc","relations":{"viewer":{"this":{}}},
          "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"user"}]}}}}]}"#;
 
-    fn check(fga: &Fga, tx: &impl Source, user: &str) -> Value {
-        let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
-        fga.check(
-            tx,
-            "s",
-            &serde_json::to_vec(&req).unwrap(),
-            Semantics::OpenFga,
-        )
-    }
-
     #[test]
-    fn caller_owned_transactions() {
-        let db = Database::builder()
-            .create_with_backend(InMemoryBackend::new())
-            .unwrap();
+    fn write_then_check() {
+        let s = MemoryStore::default();
         let fga = Fga::default();
-        let tx = db.begin_write().unwrap();
         assert_eq!(
-            fga.write_model(&tx, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", MODEL.as_bytes())
+            fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", MODEL.as_bytes())
                 ["authorization_model_id"],
             "01ARZ3NDEKTSV4RRFFQ69G5FAV"
         );
         let w = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}]}});
         assert_eq!(
-            fga.write(&tx, "s", &serde_json::to_vec(&w).unwrap()),
+            fga.write(&s, "s", &serde_json::to_vec(&w).unwrap()),
             json!({})
         );
-        // Read-your-writes inside the uncommitted transaction.
-        assert_eq!(check(&fga, &tx, "user:anne")["allowed"], true);
-        assert_eq!(check(&fga, &tx, "user:bob")["allowed"], false);
+        let check = |user: &str| {
+            let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
+            fga.check(
+                &s,
+                "s",
+                &serde_json::to_vec(&req).unwrap(),
+                Semantics::OpenFga,
+            )
+        };
+        assert_eq!(check("user:anne")["allowed"], true);
+        assert_eq!(check("user:bob")["allowed"], false);
         // The same write again fails, and changes nothing.
         assert_eq!(
-            fga.write(&tx, "s", &serde_json::to_vec(&w).unwrap())["error"]["code"],
+            fga.write(&s, "s", &serde_json::to_vec(&w).unwrap())["error"]["code"],
             "write_failed_due_to_invalid_input"
         );
-        tx.abort().unwrap();
-        // Rolled back: no model, no tuple.
-        let r = db.begin_read().unwrap();
-        assert_eq!(
-            check(&fga, &r, "user:anne")["error"]["code"],
-            "latest_authorization_model_not_found"
-        );
-        drop(r);
-
-        let tx = db.begin_write().unwrap();
-        fga.write_model(&tx, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", MODEL.as_bytes());
-        fga.write(&tx, "s", &serde_json::to_vec(&w).unwrap());
-        tx.commit().unwrap();
-        let r = db.begin_read().unwrap();
-        assert_eq!(check(&fga, &r, "user:anne")["allowed"], true);
     }
 
     #[test]
@@ -801,22 +601,27 @@ mod tests {
             {"type":"doc","relations":{"viewer":{"this":{}}},
              "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"user","condition":"cx"}]}}}}],
             "conditions":{"cx":{"name":"cx","expression":"x < 1","parameters":{"x":{"type_name":"TYPE_NAME_INT"}}}}}"#;
-        let db = Database::builder().create_with_backend(InMemoryBackend::new()).unwrap();
+        let s = MemoryStore::default();
         let fga = Fga::default();
-        let tx = db.begin_write().unwrap();
-        fga.write_model(&tx, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
         let write = |cond: Value, ignore: bool| {
             let mut w = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne", "condition": cond}]}});
             if ignore {
                 w["writes"]["on_duplicate"] = json!("ignore");
             }
-            fga.write(&tx, "s", &serde_json::to_vec(&w).unwrap())
+            fga.write(&s, "s", &serde_json::to_vec(&w).unwrap())
         };
         assert_eq!(write(json!({"name": "cx"}), false), json!({}));
         // The stored tuple reads back with an empty context, which a request
         // without one does not equal (proto.Equal), but `{}` does.
-        assert_eq!(write(json!({"name": "cx"}), true)["error"]["code"], "aborted");
+        assert_eq!(
+            write(json!({"name": "cx"}), true)["error"]["code"],
+            "aborted"
+        );
         assert_eq!(write(json!({"name": "cx", "context": {}}), true), json!({}));
-        assert_eq!(write(json!({"name": "cx", "context": {"x": 0}}), true)["error"]["code"], "aborted");
+        assert_eq!(
+            write(json!({"name": "cx", "context": {"x": 0}}), true)["error"]["code"],
+            "aborted"
+        );
     }
 }

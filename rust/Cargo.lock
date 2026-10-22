@@ -23,9 +23,44 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "quint-connect",
- "redb",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "atomicfga-ffi"
+version = "0.1.0"
+dependencies = [
+ "atomicfga-check",
+ "atomicfga-redb",
+ "redb",
+ "serde_json",
+]
+
+[[package]]
+name = "atomicfga-redb"
+version = "0.1.0"
+dependencies = [
+ "atomicfga-check",
+ "redb",
+ "serde_json",
+]
+
+[[package]]
+name = "atomicfga-web"
+version = "0.1.0"
+dependencies = [
+ "atomicfga-check",
+ "serde_json",
+]
+
+[[package]]
+name = "atomicfga-web-redb"
+version = "0.1.0"
+dependencies = [
+ "atomicfga-check",
+ "atomicfga-redb",
+ "redb",
 ]
 
 [[package]]

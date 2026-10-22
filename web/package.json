@@ -1,0 +1,10 @@
+{
+  "name": "atomicfga-web",
+  "private": true,
+  "type": "module",
+  "description": "The atomicfga evaluator in browsers: JS glue, store adapters and browser tests",
+  "devDependencies": {
+    "@sqlite.org/sqlite-wasm": "3.53.4-build2",
+    "playwright-core": "1.57.0"
+  }
+}

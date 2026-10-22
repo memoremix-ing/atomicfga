@@ -1,0 +1,115 @@
+// A store adapter over SQLite compiled to WebAssembly (@sqlite.org/sqlite-wasm),
+// persisted to OPFS through its "SAH pool" VFS (in a worker; no
+// cross-origin isolation needed). Pass SQLite's initializer (the default
+// export of @sqlite.org/sqlite-wasm), so this module imports nothing a
+// worker could not resolve.
+
+import { encodeModel, encodeTuples } from "../atomicfga.js";
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS tuples (
+  store TEXT NOT NULL, object TEXT NOT NULL, relation TEXT NOT NULL, user TEXT NOT NULL,
+  value BLOB NOT NULL,
+  PRIMARY KEY (store, object, relation, user)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS models (
+  store TEXT NOT NULL, id TEXT NOT NULL, model BLOB NOT NULL,
+  PRIMARY KEY (store, id)
+) WITHOUT ROWID;`;
+
+const empty = new Uint8Array(0);
+
+// The SAH pool holds its files' access handles for the worker's lifetime:
+// install each pool once.
+const pools = new Map();
+
+function pool(sqlite3InitModule, name) {
+  if (!pools.has(name)) pools.set(name, sqlite3InitModule().then((sqlite3) => sqlite3.installOpfsSAHPoolVfs({ name })));
+  return pools.get(name);
+}
+
+export class SqliteStore {
+  #db;
+  #pool;
+  #stmts = {};
+
+  /** Opens (creating) `file` in the SAH pool `poolName`. */
+  static async open(sqlite3InitModule, { file = "/atomicfga.sqlite3", poolName = "atomicfga" } = {}) {
+    const store = new SqliteStore();
+    store.#pool = await pool(sqlite3InitModule, poolName);
+    store.#db = new store.#pool.OpfsSAHPoolDb(file);
+    store.#db.exec(SCHEMA);
+    const prepare = (name, sql) => (store.#stmts[name] = store.#db.prepare(sql));
+    prepare("get", "SELECT value FROM tuples WHERE store = ? AND object = ? AND relation = ? AND user = ?");
+    prepare("scan", "SELECT user, value FROM tuples WHERE store = ? AND object = ? AND relation = ?");
+    prepare("put", "INSERT OR REPLACE INTO tuples (store, object, relation, user, value) VALUES (?, ?, ?, ?, coalesce(?, x''))");
+    prepare("delete", "DELETE FROM tuples WHERE store = ? AND object = ? AND relation = ? AND user = ?");
+    prepare("model", "SELECT model FROM models WHERE store = ? AND id = ?");
+    prepare("latest", "SELECT id, model FROM models WHERE store = ? ORDER BY id DESC LIMIT 1");
+    prepare("putModel", "INSERT OR REPLACE INTO models (store, id, model) VALUES (?, ?, ?)");
+    return store;
+  }
+
+  /** Removes every database file of the pool. */
+  static async wipe(sqlite3InitModule, { poolName = "atomicfga" } = {}) {
+    await (await pool(sqlite3InitModule, poolName)).wipeFiles();
+  }
+
+  close() {
+    Object.values(this.#stmts).forEach((s) => s.finalize());
+    this.#db.close();
+  }
+
+  #run(name, params, each) {
+    const s = this.#stmts[name];
+    try {
+      s.bind(params);
+      while (s.step()) each?.(s);
+    } finally {
+      s.reset(true);
+    }
+  }
+
+  #blob(s, i) {
+    return s.get(i) ?? empty;
+  }
+
+  begin(write) {
+    this.#db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
+  }
+  commit() {
+    this.#db.exec("COMMIT");
+  }
+  abort() {
+    this.#db.exec("ROLLBACK");
+  }
+  tupleGet(store, object, relation, user) {
+    let v = null;
+    this.#run("get", [store, object, relation, user], (s) => (v = this.#blob(s, 0)));
+    return v;
+  }
+  tupleScan(store, object, relation) {
+    const rows = [];
+    this.#run("scan", [store, object, relation], (s) => rows.push([s.get(0), this.#blob(s, 1)]));
+    return encodeTuples(rows);
+  }
+  tuplePut(store, object, relation, user, value) {
+    this.#run("put", [store, object, relation, user, value]);
+  }
+  tupleDelete(store, object, relation, user) {
+    this.#run("delete", [store, object, relation, user]);
+  }
+  modelGet(store, id) {
+    let v = null;
+    this.#run("model", [store, id], (s) => (v = this.#blob(s, 0)));
+    return v;
+  }
+  modelLatest(store) {
+    let v = null;
+    this.#run("latest", [store], (s) => (v = encodeModel(s.get(0), this.#blob(s, 1))));
+    return v;
+  }
+  modelPut(store, id, model) {
+    this.#run("putModel", [store, id, model]);
+  }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "atomicfga-web"
+description = "atomicfga-check as a WebAssembly module whose storage the host provides"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+atomicfga-check.workspace = true
+serde_json.workspace = true

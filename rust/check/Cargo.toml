@@ -1,0 +1,18 @@
+[package]
+name = "atomicfga-check"
+description = "Sans-IO port of OpenFGA's Check, model compiler and API layer; storage-free"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# Model-based testing against spec/check.qnt (needs `quint` on PATH; see
+# the Makefile's test-spec target).
+quint-connect = "=0.1.2"
+anyhow = "1"

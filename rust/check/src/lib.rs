@@ -12,15 +12,14 @@
 //! upstream), it *refuses* instead of answering. Refusals are counted by the
 //! conformance gates; wrong answers fail them.
 
+pub mod api;
 mod cel;
 mod compile;
 mod exec;
-mod ffi;
 mod model;
 mod outcome;
-#[cfg(feature = "redb")]
-pub mod redb_store;
 mod resolve;
+pub mod store;
 mod strings;
 mod validate;
 mod weighted;

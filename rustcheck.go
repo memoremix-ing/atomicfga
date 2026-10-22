@@ -3,7 +3,7 @@
 package atomicfga
 
 /*
-#cgo LDFLAGS: ${SRCDIR}/rust/target/release/libatomicfga_check.a
+#cgo LDFLAGS: ${SRCDIR}/rust/target/release/libatomicfga_ffi.a
 #cgo darwin LDFLAGS: -framework CoreFoundation
 #include <stdbool.h>
 #include <stddef.h>

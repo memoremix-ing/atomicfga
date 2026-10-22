@@ -1,22 +1,24 @@
-[package]
-name = "atomicfga-check"
+# The Rust port of Check (see docs/rustcheck.md).
+#
+#   check/        the evaluator, model compiler and API layer; no storage
+#   redb/         redb implementations of the storage interface
+#   ffi/          the C ABI atomicfga's Go host links (static library)
+#   web/          browser modules (evaluator, redb store) and their JS glue
+[workspace]
+resolver = "2"
+members = ["check", "redb", "ffi", "web/evaluator", "web/redb"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
 license = "Apache-2.0"
-description = "Sans-IO port of OpenFGA's Check resolution, held to atomicfga's conformance gates"
 publish = false
 
-[lib]
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[features]
-# A redb store (redb_store.rs): models and tuples in the caller's redb
-# transactions.
-redb = ["dep:redb"]
-
-[dependencies]
-redb = { version = "4.4", optional = true }
+[workspace.dependencies]
+atomicfga-check = { path = "check" }
+atomicfga-redb = { path = "redb" }
+redb = "4.4"
 serde = { version = "1.0", features = ["derive"] }
 # float_roundtrip: condition parameters must convert exactly as protobuf's
 # float64 values do in Go.
@@ -30,14 +32,8 @@ strip = true
 # Unwinding stays on: the FFI boundary turns a panic into a refusal rather
 # than aborting the host process.
 
-# Size-optimized build for wasm32 measurements.
+# Size-optimized build for the browser modules.
 [profile.wasm]
 inherits = "release"
 opt-level = "z"
 panic = "abort"
-
-[dev-dependencies]
-# Model-based testing against spec/check.qnt (needs `quint` on PATH; see
-# the Makefile's test-spec target).
-quint-connect = "=0.1.2"
-anyhow = "1"

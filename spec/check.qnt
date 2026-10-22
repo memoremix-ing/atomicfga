@@ -28,7 +28,7 @@
 //
 // Actions write and delete valid tuples (`stored`), and check a query; `result` holds
 // the last query and its canonical answer, which the Rust evaluator must
-// reproduce (rust/tests/quint.rs).
+// reproduce (rust/check/tests/quint.rs).
 module check {
   type Tuple = { object: str, relation: str, user: str }
   type Query = { object: str, relation: str, user: str }

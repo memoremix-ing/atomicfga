@@ -262,9 +262,11 @@ to OpenFGA's Check. Build with `make rust` and `-tags rustcheck`. Its gates
 transaction; see [docs/rustcheck.md](docs/rustcheck.md) for the design,
 the results, and the upstream nondeterminism they surfaced. The evaluator
 also has a canonical (least-fixed-point) mode, checked against a Quint
-specification (`spec/check.qnt`, `make test-spec`), and an optional redb
-store (feature `redb`) that serves models, writes and checks in the
-caller's redb transactions.
+specification (`spec/check.qnt`, `make test-spec`). Storage sits behind a
+small interface: a redb implementation serves models, writes and checks in
+the caller's redb transactions, and in browsers a separate redb module
+(persisted to OPFS) or SQLite-WASM plugs into the storage-free evaluator
+module (`web/`, `make test-web`).
 
 ## Layout
 
@@ -277,6 +279,7 @@ track/github.com/memoremix-ing/atomicfga.git/sts-0/
   internal/testdb/                                test databases
   tests/                                          upstream suites, Hegel
   bench/                                          benchmarks vs. original
-  rust/ rustcheck.go                              Rust port of Check (prototype)
+  rust/ rustcheck.go rustredb.go                  Rust port of Check (prototype)
+  web/                                            browser glue, store adapters, tests
   spec/                                           Quint spec of canonical Check
 ```

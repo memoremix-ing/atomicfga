@@ -218,7 +218,7 @@ impl Driver for CheckDriver {
     }
 }
 
-#[quint_run(spec = "../spec/check.qnt", max_samples = 200, max_steps = 40)]
+#[quint_run(spec = "../../spec/check.qnt", max_samples = 200, max_steps = 40)]
 fn canonical_check_matches_spec() -> impl Driver {
     CheckDriver::default()
 }

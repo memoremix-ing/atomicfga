@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>atomicfga store adapters</title>
+<script type="module">
+  // Runs one phase (?phase=fresh|reopen|perf) in a worker; run.mjs reads
+  // window.result.
+  const phase = new URLSearchParams(location.search).get("phase") ?? "fresh";
+  const worker = new Worker("./worker.js", { type: "module" });
+  worker.onmessage = (e) => { window.result = e.data; document.body.textContent = JSON.stringify(e.data, null, 1); };
+  worker.onerror = (e) => { window.result = { ok: false, error: e.message || "worker error" }; };
+  worker.postMessage({ phase });
+</script>

@@ -1,7 +1,7 @@
-//! C ABI for hosts (atomicfga links it through cgo). Every message is JSON.
+//! C ABI over `atomicfga-check` for hosts (atomicfga links it through cgo). Every message is JSON.
 //! A panic never crosses the boundary: it becomes a refusal.
 
-use crate::{Engine, Task};
+use atomicfga_check::{Engine, Task};
 use serde_json::{json, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -142,8 +142,8 @@ pub unsafe extern "C" fn afc_compile_model(
     let json = bytes(json, len);
     let options = bytes(options, options_len);
     buf(guarded(|| match serde_json::from_slice(options) {
-        Ok(o) => crate::compile_json(json, o),
-        Err(_) if options.is_empty() => crate::compile_json(json, Default::default()),
+        Ok(o) => atomicfga_check::compile_json(json, o),
+        Err(_) if options.is_empty() => atomicfga_check::compile_json(json, Default::default()),
         Err(e) => json!({"undecided": format!("options: {e}")}),
     }))
 }
@@ -156,19 +156,17 @@ pub unsafe extern "C" fn afc_compile_model(
 #[no_mangle]
 pub unsafe extern "C" fn afc_model_alternatives(json: *const u8, len: usize) -> AfcBuf {
     let json = bytes(json, len);
-    buf(guarded(|| crate::alternatives_json(json)))
+    buf(guarded(|| atomicfga_check::alternatives_json(json)))
 }
 
-/// An in-memory redb database with a [`crate::redb_store::Fga`], for hosts
+/// An in-memory redb database with an [`atomicfga_check::api::Fga`], for hosts
 /// and conformance tests. Each call runs in a transaction of its own, which
 /// it commits only if the call succeeds.
-#[cfg(feature = "redb")]
 pub struct RedbHandle {
     db: redb::Database,
-    fga: crate::redb_store::Fga,
+    fga: atomicfga_check::api::Fga,
 }
 
-#[cfg(feature = "redb")]
 #[no_mangle]
 pub extern "C" fn afc_redb_new() -> *mut RedbHandle {
     let db = redb::Database::builder()
@@ -182,7 +180,6 @@ pub extern "C" fn afc_redb_new() -> *mut RedbHandle {
 
 /// # Safety
 /// `h` must come from `afc_redb_new` and not be used afterwards.
-#[cfg(feature = "redb")]
 #[no_mangle]
 pub unsafe extern "C" fn afc_redb_free(h: *mut RedbHandle) {
     if !h.is_null() {
@@ -190,7 +187,6 @@ pub unsafe extern "C" fn afc_redb_free(h: *mut RedbHandle) {
     }
 }
 
-#[cfg(feature = "redb")]
 fn in_write(h: &RedbHandle, f: impl FnOnce(&redb::WriteTransaction) -> Value) -> Value {
     let tx = match h.db.begin_write() {
         Ok(tx) => tx,
@@ -213,7 +209,6 @@ fn in_write(h: &RedbHandle, f: impl FnOnce(&redb::WriteTransaction) -> Value) ->
 ///
 /// # Safety
 /// `h` must be live; the pointers must point to readable bytes.
-#[cfg(feature = "redb")]
 #[no_mangle]
 pub unsafe extern "C" fn afc_redb_write_model(
     h: *const RedbHandle,
@@ -229,7 +224,10 @@ pub unsafe extern "C" fn afc_redb_write_model(
     let id = std::str::from_utf8(bytes(id, id_len)).unwrap_or("");
     let json = bytes(json, len);
     buf(guarded(|| {
-        in_write(h, |tx| h.fga.write_model(tx, store, id, json))
+        in_write(h, |tx| {
+            h.fga
+                .write_model(&atomicfga_redb::Write(tx), store, id, json)
+        })
     }))
 }
 
@@ -237,7 +235,6 @@ pub unsafe extern "C" fn afc_redb_write_model(
 ///
 /// # Safety
 /// `h` must be live; the pointers must point to readable bytes.
-#[cfg(feature = "redb")]
 #[no_mangle]
 pub unsafe extern "C" fn afc_redb_write(
     h: *const RedbHandle,
@@ -249,14 +246,15 @@ pub unsafe extern "C" fn afc_redb_write(
     let h = &*h;
     let store = std::str::from_utf8(bytes(store, store_len)).unwrap_or("");
     let json = bytes(json, len);
-    buf(guarded(|| in_write(h, |tx| h.fga.write(tx, store, json))))
+    buf(guarded(|| {
+        in_write(h, |tx| h.fga.write(&atomicfga_redb::Write(tx), store, json))
+    }))
 }
 
 /// `Check` (a CheckRequest in protojson), in OpenFGA semantics.
 ///
 /// # Safety
 /// `h` must be live; the pointers must point to readable bytes.
-#[cfg(feature = "redb")]
 #[no_mangle]
 pub unsafe extern "C" fn afc_redb_check(
     h: *const RedbHandle,
@@ -270,7 +268,12 @@ pub unsafe extern "C" fn afc_redb_check(
     let store = std::str::from_utf8(bytes(store, store_len)).unwrap_or("");
     let json = bytes(json, len);
     buf(guarded(|| match h.db.begin_read() {
-        Ok(tx) => h.fga.check(&tx, store, json, crate::Semantics::OpenFga),
+        Ok(tx) => h.fga.check(
+            &atomicfga_redb::Read(&tx),
+            store,
+            json,
+            atomicfga_check::Semantics::OpenFga,
+        ),
         Err(e) => json!({"error": {"code": "internal_error", "message": e.to_string()}}),
     }))
 }

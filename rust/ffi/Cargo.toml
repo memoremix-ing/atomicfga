@@ -1,0 +1,17 @@
+[package]
+name = "atomicfga-ffi"
+description = "C ABI over atomicfga-check (and an in-memory redb store for conformance tests)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+atomicfga-check.workspace = true
+atomicfga-redb.workspace = true
+redb.workspace = true
+serde_json.workspace = true

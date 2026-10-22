@@ -59,7 +59,7 @@ depend on goroutine timing. Every resolution step in the port therefore
 yields the **set of outcomes** OpenFGA could produce (allowed, denied, denied
 with a cycle, error), never a guess at one interleaving. The engine answers
 only when every member of the final set gives the same API result
-(`src/outcome.rs`).
+(`rust/check/src/outcome.rs`).
 
 Building the gates surfaced a larger source of nondeterminism. OpenFGA's
 planner chooses, per node and by Thompson sampling over observed latencies,
@@ -83,7 +83,7 @@ are evaluated): it adds plain `false` beside a cycle,
 refuses if the subtree came within three levels of the depth limit or
 errored, and refuses if any relation beneath it admits conditional tuples.
 The predicates rest on the weighted authorization model graph of OpenFGA's
-`language` package. `src/weighted.rs` ports it: the builder, weight
+`language` package. `rust/check/src/weighted.rs` ports it: the builder, weight
 assignment with tuple-cycle resolution, the recursive and tuple-cycle marks,
 and the four predicates (userset weights and wildcard sets, which only
 ListObjects uses, are not ported). Every model the port loads derives its
@@ -138,7 +138,7 @@ fast-path nondeterminism above, in the unmutated port.
 
 ## Model compiler
 
-`src/compile.rs` decides, from a model's JSON alone (a
+`rust/check/src/compile.rs` decides, from a model's JSON alone (a
 `WriteAuthorizationModelRequest` body or an `AuthorizationModel`, in
 protojson), whether OpenFGA's `WriteAuthorizationModel` accepts it, and with
 which error code:
@@ -222,7 +222,7 @@ are excluded, as OpenFGA refuses to write them.
 The evaluator has a `Semantics::Canonical` mode, in which a cycle means only
 "not derivable along this path" (path-based loop checking is complete for
 positive rules, and stratification keeps negated subgoals off the path), and
-in which nothing is widened for OpenFGA's planner. `rust/tests/quint.rs`
+in which nothing is widened for OpenFGA's planner. `rust/check/tests/quint.rs`
 uses [quint-connect](https://github.com/informalsystems/quint-connect) to
 replay random traces of the spec (tuple writes, deletes, checks) against it:
 after every step the evaluator's last answer must equal the spec's. `make
@@ -246,54 +246,152 @@ third survived until the wildcard-only relation `doc#public` was added to
 the model. The fourth is an equivalent mutant: userset reads only return
 `type#relation` users, so the short-circuit never fires (in OpenFGA either).
 
-## A redb store
+## Layout and the storage interface
 
-With the `redb` feature, `src/redb_store.rs` serves OpenFGA's model, write
-and check APIs from [redb](https://www.redb.org) tables, in the caller's
-redb transactions: `Fga::write_model` and `Fga::write` take a
-`&WriteTransaction`, and `Fga::check` takes a `&ReadTransaction` or a
-`&WriteTransaction`, whose uncommitted writes it sees. Committing or
-aborting is the application's call, as with atomicfga's SQL sessions.
-Models go through the model compiler. Writes are validated as OpenFGA's
-`Write` validates them (protobuf rules, model resolution, the
+`rust/` is a Cargo workspace:
+
+| crate | what | depends on |
+|---|---|---|
+| `check` (`atomicfga-check`) | evaluator, model compiler, weighted graph, and `api::Fga`: OpenFGA's model, write and check APIs over any `store::Store` | serde, serde_json |
+| `redb` (`atomicfga-redb`) | `Store`/`StoreMut` over redb transactions | check, redb |
+| `ffi` (`atomicfga-ffi`) | the C ABI atomicfga's Go host links (static library) | check, redb |
+| `web/evaluator` (`atomicfga-web`) | the evaluator as a browser module; storage imported | check |
+| `web/redb` (`atomicfga-web-redb`) | a redb store as a browser module, in memory or on OPFS | redb |
+
+The evaluator has no storage. Everything it needs from one is
+`store::Store` and `store::StoreMut`: an exact tuple lookup, a scan of
+`(store, object, relation)`, put and delete, and models by ID and latest
+(greatest ULID), within a transaction the caller owns, with values as
+opaque bytes (a tuple's encoded condition, a model's protojson). Writes are
+validated by `api::Fga` (protobuf rules, model resolution, the
 inline-expression flag, `ValidateTupleForWrite`, implicit tuples, context
 size, duplicates, the 100-tuple limit, then missing and existing tuples
-under `on_missing`/`on_duplicate`), all or nothing. Checks run on the
-evaluator's synchronous runner, whose reads are answered from the tuple
-table as OpenFGA's SQL datastores answer them.
+under `on_missing`/`on_duplicate`), before anything is written; checks run
+on the evaluator's synchronous runner, whose reads the store answers as
+OpenFGA's SQL datastores answer them. `store::MemoryStore` is the
+reference implementation.
+
+With redb, the application wraps its transaction (`atomicfga_redb::Write(&tx)`
+or `Read(&tx)`): checks see the transaction's uncommitted writes, and
+committing or aborting is the application's call, so authorization data
+changes atomically with the application's own redb tables.
 
 `TestHegelRustRedb` drives the same model writes, tuple writes and deletes,
-and checks into the original OpenFGA server and into the redb store, served
-by the Rust port alone, and compares every outcome: 12,910 operations, none
-wrong. A case is stopped once the port refuses a model or a write, as the
-stores could differ from then on. Of five planted bugs in the adapter, four
-fail it; the fifth (userset reads ignoring the user's type) has no effect,
-because every tuple read is revalidated against the model before use.
+and checks into the original OpenFGA server and into an in-memory redb
+store served by the Rust port alone, and compares every outcome: 12,910
+operations, none wrong. A case is stopped once the port refuses a model or a
+write, as the stores could differ from then on. Of five planted bugs in the
+redb adapter, four fail it; the fifth (userset reads ignoring the user's
+type) has no effect, because every tuple read is revalidated against the
+model before use.
 
 An earlier mutant run left a counterexample that exposed a third upstream
 quirk. With `on_duplicate: ignore`, OpenFGA compares the written tuple with
 the stored one using `proto.Equal`. A stored condition always reads back
 with a context, an empty one if none was written, so re-sending an
 identical conditional tuple *without* a context fails as a conflict
-(`Aborted`), while sending `context: {}` succeeds. The store reproduces it;
-`ignored_duplicates_compare_as_openfga_does` pins it.
+(`Aborted`), while sending `context: {}` succeeds. `api::Fga` reproduces
+it; `ignored_duplicates_compare_as_openfga_does` pins it.
 
-redb runs in `wasm32-unknown-unknown` (its in-memory backend, no imports).
-With the store, the module is 1.21 MiB (373 KiB gzipped); persistence in a
-browser would need a `StorageBackend` over its file storage (OPFS), not
-written yet.
+## In browsers
+
+Two independent modules, composed by the host (`web/`):
+
+- `atomicfga_web.wasm`, the evaluator, imports eight store functions
+  (`store.tuple_get`, `tuple_scan`, `tuple_put`, `tuple_delete`,
+  `model_get`, `model_latest`, `model_put`, `fetch`) and exports the API
+  (`write_model`, `write`, `check`, `compile`) with protojson in and JSON
+  out. `web/atomicfga.js` binds the imports to a JavaScript store adapter.
+- `atomicfga_web_redb.wasm`, a redb store with its own transactions, imports
+  only five `opfs.*` functions: redb's `StorageBackend`, which
+  `web/stores/redb.js` implements with a `FileSystemSyncAccessHandle` (in a
+  worker). It knows nothing of authorization, so it can hold an
+  application's other data too.
+
+Store adapters share one small interface (begin/commit/abort, the tuple and
+model functions): `stores/memory.js` (the reference), `stores/redb.js` (in
+memory or on OPFS), and `stores/sqlite.js` (SQLite compiled to WebAssembly,
+`@sqlite.org/sqlite-wasm`, on OPFS through its SAH pool VFS, which needs no
+cross-origin isolation).
+
+`make test-web` runs `web/test/` in Chromium, Firefox and WebKit
+(Playwright's browsers), each on a persistent profile. Every adapter replays
+one seeded workload of 121 transactions, 26 of them aborted (model writes;
+valid, invalid, duplicate and conditional tuple writes and deletes; checks
+in both semantics; 263 outcomes), and must match the reference outcome for
+outcome and in the final state. Then the browser quits and relaunches on
+the same profile, and the OPFS stores must still hold exactly what was
+committed. All pass in all three engines.
+
+### redb or SQLite for browser persistence
+
+Measured with `make test-web` on darwin/arm64 (10,000 tuples loaded in
+100-tuple transactions; per-check medians of 300, warm):
+
+| | Chromium | Firefox | WebKit |
+|---|---:|---:|---:|
+| load, redb on OPFS | 286 ms | 794 ms | 181 ms |
+| load, SQLite on OPFS | 564 ms | 539 ms | 181 ms |
+| direct check, redb / SQLite | 17 / 26 µs | 67 / 63 µs | 17 / 17 µs |
+| parent chain (11 reads), redb / SQLite | 105 / 98 µs | 393 / 300 µs | 67 / 83 µs |
+| exclusion (7 reads), redb / SQLite | 54 / 57 µs | 240 / 190 µs | 43 / 47 µs |
+
+| download | raw | gzipped |
+|---|---:|---:|
+| evaluator (`atomicfga_web.wasm`) | 557 KiB | 211 KiB |
+| redb store (`atomicfga_web_redb.wasm`) | 563 KiB | 204 KiB |
+| SQLite (`sqlite3.wasm`) | 849 KiB | 393 KiB |
+| SQLite's JavaScript (`index.mjs`, unminified) | 628 KiB | 170 KiB |
+
+Both are correct here and fast enough that a check costs tens of
+microseconds either way; neither dominates on speed (redb loads faster in
+Chromium, SQLite in Firefox, a tie in WebKit). redb is about half SQLite's
+download. SQLite brings SQL, a mature file format other tools read, and
+atomicfga's own SQLite datastore semantics; redb brings a single-language
+stack and a smaller module. The redb backend is new code (five functions);
+its durability rests on redb's commit protocol and OPFS `flush`, which these
+tests do not stress (no crash injection).
+
+## Message formats
+
+The evaluator's messages are JSON. To see whether another format would
+shrink the module, one crate holding the messages' shapes (a model with
+nested types, a recursive rewrite and maps; a check request with contextual
+tuples; read answers) was built for `wasm32-unknown-unknown` (`opt-level =
+"z"`) with each library decoding them and encoding a response:
+
+| library | format | KiB | gzipped KiB |
+|---|---|---:|---:|
+| serde_json (current) | JSON | 114 | 43 |
+| serde_json `Value`, no derives | JSON | 94 | 37 |
+| miniserde | JSON | 71 | 27 |
+| nanoserde | JSON | 119 | 51 |
+| ciborium (serde) | CBOR | 141 | 53 |
+| minicbor (own derive) | CBOR | 84 | 25 |
+| rmp-serde | MessagePack | 272 | 74 |
+| flexbuffers (serde) | FlexBuffers | 203 | 77 |
+| postcard (serde) | postcard | 37 | 13 |
+| nanoserde | binary | 36 | 13 |
+
+Most of the cost is code generated per message type and per format, not the
+format: FlexBuffers, MessagePack and CBOR through serde are all larger than
+JSON. Libraries built to avoid that code win (miniserde for JSON, minicbor
+for CBOR, postcard or nanoserde's binary format). [Lite³](https://github.com/fastserial/lite3)
+was not measured: it is a C library without an official Rust crate, built
+for in-place access rather than small decoders.
 
 ## Size and speed
 
-**WebAssembly.** `make wasm-size` builds the evaluator and the model
-compiler and the weighted graph for `wasm32-unknown-unknown`
-(`opt-level = "z"`, no `wasm-opt`): **604 KiB, 196 KiB gzipped** (the
-compiler adds 27 KiB gzipped, the weighted graph 13 KiB), against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator and
-44.6 MiB / 8.7 MiB for its Go build. The difference is mostly the condition
-evaluator (no CEL library, no regex engine, no chrono) and the lack of an
-embedded datastore. The module exports the C ABI of `src/ffi.rs`; a
-JavaScript host would also need an allocation export to pass buffers in,
-which is not written yet.
+**WebAssembly.** `make wasm-size` builds the browser evaluator (the
+evaluator, model compiler, weighted graph and API layer, storage imported)
+for `wasm32-unknown-unknown` (`opt-level = "z"`, no `wasm-opt`): **557 KiB,
+211 KiB gzipped**, against 3.42 MiB / 0.92 MiB for wasmfga's Rust evaluator
+and 44.6 MiB / 8.7 MiB for its Go build. The difference is mostly the
+condition evaluator (no CEL library, no regex engine, no chrono) and the
+lack of an embedded datastore. Only about a fifth of the module is the
+authorization logic itself; the rest is message decoding (serde_json's
+per-type code), collections (`BTreeMap`, sorting, hash maps) and number
+formatting, the levers for shrinking it (see Message formats).
 
 **Speed.** wasmfga's native workloads (`make bench-rust`), median per check
 on darwin/arm64, with reads answered inside an open transaction
