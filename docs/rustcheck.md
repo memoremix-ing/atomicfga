@@ -205,6 +205,47 @@ and lists decoded without their generic type. The random gate initially
 missed four. Lowering fault density, adding boundary names and adding the
 edge cases made the gates catch all eight.
 
+## Canonical semantics and the Quint spec
+
+`spec/check.qnt` defines Check declaratively, for one model that exercises
+nested group memberships, recursive folder parents, a wildcard-only
+relation, a tuple-to-userset, intersection, and an exclusion whose
+subtrahend can run into a membership cycle. A check holds iff its
+(object, relation, user) fact is in the least fixed point of the model's
+rules over a finite universe, computed bottom-up. There is no evaluation
+order, no cycle flag and no depth limit. The exclusion is stratified
+(`blocked` does not depend on `viewer`), so the fixed point is well
+defined. Its invariants (`ClosureIsFixed`, `BlockedNeverViews`) are checked
+by Quint's simulator. Implicit tuples (`group:g1#member@group:g1#member`)
+are excluded, as OpenFGA refuses to write them.
+
+The evaluator has a `Semantics::Canonical` mode, in which a cycle means only
+"not derivable along this path" (path-based loop checking is complete for
+positive rules, and stratification keeps negated subgoals off the path), and
+in which nothing is widened for OpenFGA's planner. `rust/tests/quint.rs`
+uses [quint-connect](https://github.com/informalsystems/quint-connect) to
+replay random traces of the spec (tuple writes, deletes, checks) against it:
+after every step the evaluator's last answer must equal the spec's. `make
+test-spec` runs 200 traces of up to 40 steps (about 2,000 checks) in about
+four seconds, with Quint pinned in `spec/package.json`.
+
+Every check also runs in OpenFGA semantics, and the driver reports answers
+that differ from the canonical one. With implicit tuples allowed, it found
+one within seconds: a blocklist containing a group whose membership is
+implicitly self-referential makes OpenFGA's default resolver deny access the
+canonical semantics grants (the subtrahend's cycle flag decides the
+exclusion). With implicit tuples excluded, none was found. The valid
+counterpart, mutually nested groups, does not diverge on OpenFGA in
+practice: its planner resolves the membership with the recursive strategy,
+which has no cycle flag. The OpenFGA-compatible mode refuses there.
+
+**Mutation testing.** Of four planted bugs (canonical mode keeping the cycle
+flag, no self-defining check, wildcard reachability lost, wildcard
+short-circuit in userset reads removed), the first three fail the gate. The
+third survived until the wildcard-only relation `doc#public` was added to
+the model. The fourth is an equivalent mutant: userset reads only return
+`type#relation` users, so the short-circuit never fires (in OpenFGA either).
+
 ## Size and speed
 
 **WebAssembly.** `make wasm-size` builds the evaluator and the model
@@ -251,8 +292,8 @@ refusing roughly one check in four of upstream's suites. The next steps,
 in order of refusals removed:
 
 1. Port the recursive and weight-2 strategies (the weighted graph that
-   selects them) as further outcome-set producers, replacing the widening
-   rule. This removes nearly all refusals in upstream's suites.
+   selects them is ported) as further outcome-set producers, replacing the
+   widening rule. This removes nearly all refusals in upstream's suites.
 2. List and map parameters, `in`, and the CEL macros OpenFGA's users rely on.
 3. Inline `$expression` conditions.
 4. Error messages identical to upstream's (codes already are).

@@ -1,4 +1,4 @@
-.PHONY: databases databases-down test test-unit test-upstream test-hegel bench vet rust test-rust bench-rust wasm-size
+.PHONY: databases databases-down test test-unit test-upstream test-hegel bench vet rust test-rust test-spec bench-rust wasm-size
 
 GO ?= GOTOOLCHAIN=local go
 
@@ -42,8 +42,8 @@ rust:
 # the Hegel differentials and edge cases, comparing every Rust check with
 # OpenFGA's Check in the same transaction, and every compiled model with
 # OpenFGA's WriteAuthorizationModel.
-test-rust: rust
-	cd rust && cargo test --release
+test-rust: rust test-spec
+	cd rust && cargo test --release --lib
 	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA' ./tests/
 
 bench-rust: rust
@@ -52,3 +52,14 @@ bench-rust: rust
 wasm-size:
 	cd rust && cargo build --profile wasm --target wasm32-unknown-unknown
 	@f=rust/target/wasm32-unknown-unknown/wasm/atomicfga_check.wasm; echo "$$(wc -c < $$f) bytes, $$(gzip -9 -c $$f | wc -c) gzipped"
+
+# The canonical Check specification (spec/check.qnt, Quint pinned in
+# spec/package.json): its invariants, then quint-connect replaying its traces
+# against the evaluator in canonical semantics.
+spec/node_modules: spec/package.json spec/package-lock.json
+	cd spec && npm ci --no-audit --no-fund
+	touch spec/node_modules
+
+test-spec: spec/node_modules
+	cd spec && ./node_modules/.bin/quint run check.qnt --max-samples 200 --max-steps 30 --invariants ClosureIsFixed BlockedNeverViews
+	cd rust && PATH="$(CURDIR)/spec/node_modules/.bin:$$PATH" cargo test --release --test quint -- --nocapture

@@ -21,6 +21,7 @@ pub struct Ctx {
     /// Ordered by object, as CombinedTupleReader keeps them.
     pub contextual: Vec<Tuple>,
     pub request_context: Option<Map<String, Value>>,
+    pub semantics: crate::Semantics,
 }
 
 type Cx = Rc<Ctx>;
@@ -65,7 +66,10 @@ pub fn resolve_check(cx: Cx, req: Req) -> BoxFut<'static, Out> {
         }
         let key = tuple_key_string(&req.object, &req.relation, &req.user);
         if req.visited.contains(&key) {
-            return Out::c();
+            return match cx.semantics {
+                crate::Semantics::OpenFga => Out::c(),
+                crate::Semantics::Canonical => Out::f(),
+            };
         }
         let req = Req {
             visited: Rc::new(Visited::Cons(key, req.visited.clone())),
@@ -412,7 +416,10 @@ fn check_direct_usersets(cx: Cx, req: Req, usersets: Vec<RelRef>) -> BoxFut<'sta
                 .model
                 .userset_alternative(object_type, &req.relation, get_type(&req.user))
         {
-            return widen(&cx.model, object_type, &req.relation, out);
+            return match cx.semantics {
+                crate::Semantics::OpenFga => widen(&cx.model, object_type, &req.relation, out),
+                crate::Semantics::Canonical => out,
+            };
         }
         out
     })
@@ -451,7 +458,10 @@ fn check_ttu<'a>(cx: Cx, req: Req, tupleset: &'a str, computed: &'a str) -> BoxF
                 get_type(&req.user),
             )
         {
-            return widen(&cx.model, object_type, &req.relation, out);
+            return match cx.semantics {
+                crate::Semantics::OpenFga => widen(&cx.model, object_type, &req.relation, out),
+                crate::Semantics::Canonical => out,
+            };
         }
         out
     })

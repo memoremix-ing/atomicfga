@@ -260,7 +260,9 @@ be certain of OpenFGA's answer it refuses, and `Session.RustCheck` falls back
 to OpenFGA's Check. Build with `make rust` and `-tags rustcheck`. Its gates
 (`make test-rust`) run every check through both evaluators in the same
 transaction; see [docs/rustcheck.md](docs/rustcheck.md) for the design,
-the results, and the upstream nondeterminism they surfaced.
+the results, and the upstream nondeterminism they surfaced. The evaluator
+also has a canonical (least-fixed-point) mode, checked against a Quint
+specification (`spec/check.qnt`, `make test-spec`).
 
 ## Layout
 
@@ -274,4 +276,5 @@ track/github.com/memoremix-ing/atomicfga.git/sts-0/
   tests/                                          upstream suites, Hegel
   bench/                                          benchmarks vs. original
   rust/ rustcheck.go                              Rust port of Check (prototype)
+  spec/                                           Quint spec of canonical Check
 ```

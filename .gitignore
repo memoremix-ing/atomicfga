@@ -6,3 +6,4 @@ dist/
 *.prof
 
 rust/target/
+spec/node_modules/

@@ -23,8 +23,38 @@ mod strings;
 mod validate;
 mod weighted;
 
-use exec::{poll_once, BoxFut, Io, IoRef, ReadReq};
-use model::{Model, RefKind};
+pub use exec::{Answer, ReadReq};
+pub use model::{RefKind, RelRef};
+
+/// Which semantics a check follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Semantics {
+    /// OpenFGA's answer, refusing wherever OpenFGA's own answer is not
+    /// determined (operand timing, planner strategies).
+    #[default]
+    OpenFga,
+    /// The canonical semantics of `spec/check.qnt`: a relation holds iff it
+    /// is derivable (least fixed point). A cycle only means "not derivable
+    /// along this path"; there is no cycle flag to make an exclusion false,
+    /// and no planner whose strategies could disagree.
+    Canonical,
+}
+
+/// One step of a [`Task`].
+pub enum Step {
+    /// Reads to answer, and earlier reads whose answers are no longer
+    /// needed.
+    Reads {
+        reads: Vec<(u64, ReadReq)>,
+        cancelled: Vec<u64>,
+    },
+    /// The result: `{"allowed": bool}`, `{"error": {...}}` or
+    /// `{"refused": "..."}`.
+    Done(Value),
+}
+
+use exec::{poll_once, BoxFut, Io, IoRef};
+use model::Model;
 use outcome::{Out, C, E, F, T};
 use resolve::{resolve_check, Ctx, Req, Visited};
 use serde::Deserialize;
@@ -200,12 +230,16 @@ impl Engine {
     }
 
     pub fn check(&self, model_id: &str, request: &[u8]) -> Task {
+        self.check_with(model_id, request, Semantics::OpenFga)
+    }
+
+    pub fn check_with(&self, model_id: &str, request: &[u8], semantics: Semantics) -> Task {
         let model = self.models.lock().unwrap().get(model_id).cloned();
         let io: IoRef = Rc::new(RefCell::new(Io::default()));
         let state = match model {
             None => State::Done(json!({"refused": format!("model {model_id} is not loaded")})),
             Some(Err(why)) => State::Done(json!({"refused": format!("model: {why}")})),
-            Some(Ok(m)) => match start(m, io.clone(), request) {
+            Some(Ok(m)) => match start(m, io.clone(), request, semantics) {
                 Ok(fut) => State::Running(fut),
                 Err(done) => State::Done(done),
             },
@@ -233,7 +267,12 @@ fn error(e: ApiError) -> Value {
 }
 
 /// `validateCheckRequest`, then resolution of the request's tuple key.
-fn start(model: Arc<Model>, io: IoRef, request: &[u8]) -> Result<BoxFut<'static, Out>, Value> {
+fn start(
+    model: Arc<Model>,
+    io: IoRef,
+    request: &[u8],
+    semantics: Semantics,
+) -> Result<BoxFut<'static, Out>, Value> {
     let req: CheckRequestJson =
         serde_json::from_slice(request).map_err(|e| refused(format!("request JSON: {e}")))?;
     let tk = req
@@ -290,6 +329,7 @@ fn start(model: Arc<Model>, io: IoRef, request: &[u8]) -> Result<BoxFut<'static,
         io,
         contextual,
         request_context: req.context,
+        semantics,
     });
     Ok(resolve_check(
         cx,
@@ -328,12 +368,12 @@ impl Task {
     /// `{"error": {...}}` or `{"refused": "..."}`. A host may answer any
     /// subset of the outstanding reads per step.
     pub fn step(&mut self, answers: &[u8]) -> Value {
+        let mut typed = vec![];
         if !answers.is_empty() {
             let answers: Vec<AnswerJson> = match serde_json::from_slice(answers) {
                 Ok(a) => a,
                 Err(e) => return self.finish(refused(format!("answers JSON: {e}"))),
             };
-            let mut io = self.io.borrow_mut();
             for a in answers {
                 let ans = match a.error {
                     Some(e) => Err(e),
@@ -350,11 +390,28 @@ impl Task {
                         })
                         .collect()),
                 };
-                io.answer(a.id, ans);
+                typed.push((a.id, ans));
+            }
+        }
+        match self.advance(typed) {
+            Step::Done(v) => v,
+            Step::Reads { reads, cancelled } => {
+                let reads: Vec<Value> = reads.into_iter().map(|(id, r)| read_json(id, r)).collect();
+                json!({"reads": reads, "cancel": cancelled})
+            }
+        }
+    }
+
+    /// [`Task::step`] without JSON.
+    pub fn advance(&mut self, answers: Vec<(u64, Answer)>) -> Step {
+        {
+            let mut io = self.io.borrow_mut();
+            for (id, a) in answers {
+                io.answer(id, a);
             }
         }
         let fut = match &mut self.state {
-            State::Done(v) => return v.clone(),
+            State::Done(v) => return Step::Done(v.clone()),
             State::Running(f) => f,
         };
         match poll_once(fut) {
@@ -362,21 +419,40 @@ impl Task {
                 let reads = self.io.borrow().reads;
                 let mut v = conclude(out);
                 v["reads_total"] = json!(reads);
-                self.finish(v)
+                Step::Done(self.finish(v))
             }
             Poll::Pending => {
                 let mut io = self.io.borrow_mut();
                 if !io.busy() {
                     drop(io);
-                    return self.finish(refused("resolution stalled"));
+                    return Step::Done(self.finish(refused("resolution stalled")));
                 }
-                let reads: Vec<Value> = io
-                    .take_queued()
-                    .into_iter()
-                    .map(|(id, r)| read_json(id, r))
-                    .collect();
-                json!({"reads": reads, "cancel": io.take_cancelled()})
+                Step::Reads {
+                    reads: io.take_queued(),
+                    cancelled: io.take_cancelled(),
+                }
             }
+        }
+    }
+
+    /// Runs the task to completion, answering reads one at a time with
+    /// `read` (skipping reads that became moot), as a host whose store has
+    /// no round trips to save would.
+    pub fn run(&mut self, mut read: impl FnMut(&ReadReq) -> Answer) -> Value {
+        let mut pending: std::collections::VecDeque<(u64, ReadReq)> = Default::default();
+        let mut answers = vec![];
+        loop {
+            match self.advance(std::mem::take(&mut answers)) {
+                Step::Done(v) => return v,
+                Step::Reads { reads, cancelled } => {
+                    pending.extend(reads);
+                    pending.retain(|(id, _)| !cancelled.contains(id));
+                }
+            }
+            let Some((id, r)) = pending.pop_front() else {
+                return self.finish(refused("no reads to answer"));
+            };
+            answers.push((id, read(&r)));
         }
     }
 

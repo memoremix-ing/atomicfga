@@ -29,3 +29,9 @@ strip = true
 inherits = "release"
 opt-level = "z"
 panic = "abort"
+
+[dev-dependencies]
+# Model-based testing against spec/check.qnt (needs `quint` on PATH; see
+# the Makefile's test-spec target).
+quint-connect = "=0.1.2"
+anyhow = "1"

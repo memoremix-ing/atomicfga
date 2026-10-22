@@ -1,0 +1,8 @@
+{
+  "name": "atomicfga-spec",
+  "private": true,
+  "description": "Quint toolchain for the canonical Check specification",
+  "devDependencies": {
+    "@informalsystems/quint": "0.33.0"
+  }
+}
