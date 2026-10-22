@@ -189,6 +189,12 @@ func originalTarget(name string, d atomicfga.Dialect) wasmfgaTarget {
 	}}
 }
 
+// rustTargets is set when built with the rustcheck tag.
+var rustTargets func(sqliteTx txOpener, pg func(native bool) txOpener) []wasmfgaTarget
+
+// txOpener opens a transaction for a target.
+type txOpener = func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func())
+
 func wasmfgaTargets() []wasmfgaTarget {
 	pg := func(native bool) func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func()) {
 		return func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func()) {
@@ -197,24 +203,25 @@ func wasmfgaTargets() []wasmfgaTarget {
 			return atomicfga.Postgres, tx, func() { _ = rollback() }
 		}
 	}
-	return []wasmfgaTarget{
+	sqliteTx := func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func()) {
+		// As in wasmfga's harness: one in-memory connection.
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.SetMaxOpenConns(1)
+		if err := atomicfga.Migrate(context.Background(), db, atomicfga.SQLite); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return atomicfga.SQLite, atomicfga.SQLTx(tx), func() { _ = tx.Rollback(); _ = db.Close() }
+	}
+	targets := []wasmfgaTarget{
 		originalTarget("openfga-sqlite", atomicfga.SQLite),
-		atomicTarget("sqlite", func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func()) {
-			// As in wasmfga's harness: one in-memory connection.
-			db, err := sql.Open("sqlite", ":memory:")
-			if err != nil {
-				t.Fatal(err)
-			}
-			db.SetMaxOpenConns(1)
-			if err := atomicfga.Migrate(context.Background(), db, atomicfga.SQLite); err != nil {
-				t.Fatal(err)
-			}
-			tx, err := db.Begin()
-			if err != nil {
-				t.Fatal(err)
-			}
-			return atomicfga.SQLite, atomicfga.SQLTx(tx), func() { _ = tx.Rollback(); _ = db.Close() }
-		}),
+		atomicTarget("sqlite", sqliteTx),
 		atomicTarget("turso", func(t *testing.T) (atomicfga.Dialect, atomicfga.Tx, func()) {
 			db := testdb.Open(t, atomicfga.Turso) // migrated through its own handle
 			tx, _, rollback := db.Begin(t, false)
@@ -224,6 +231,10 @@ func wasmfgaTargets() []wasmfgaTarget {
 		atomicTarget("postgres-sql", pg(false)),
 		atomicTarget("postgres-pgx", pg(true)),
 	}
+	if rustTargets != nil {
+		targets = append(targets, rustTargets(sqliteTx, pg)...)
+	}
+	return targets
 }
 
 func TestWasmfgaWorkloads(t *testing.T) {
@@ -291,7 +302,7 @@ func TestWasmfgaWorkloads(t *testing.T) {
 
 func dialectOf(target string) atomicfga.Dialect {
 	switch target {
-	case "sqlite", "openfga-sqlite":
+	case "sqlite", "openfga-sqlite", "rust-sqlite":
 		return atomicfga.SQLite
 	case "turso":
 		return atomicfga.Turso

@@ -1,0 +1,31 @@
+[package]
+name = "atomicfga-check"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+license = "Apache-2.0"
+description = "Sans-IO port of OpenFGA's Check resolution, held to atomicfga's conformance gates"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+# float_roundtrip: condition parameters must convert exactly as protobuf's
+# float64 values do in Go.
+serde_json = { version = "1.0", features = ["float_roundtrip", "raw_value"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+# Unwinding stays on: the FFI boundary turns a panic into a refusal rather
+# than aborting the host process.
+
+# Size-optimized build for wasm32 measurements.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+panic = "abort"

@@ -4,3 +4,5 @@ dist/
 *.db-*
 *.test
 *.prof
+
+rust/target/

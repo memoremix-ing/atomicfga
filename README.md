@@ -251,6 +251,17 @@ reference runs upstream's SQLite datastore.
   barriers, cancellation, abort detection and pipelining, against a fake
   backend.
 
+## Rust port of Check (prototype)
+
+`rust/` ports OpenFGA's Check resolution to Rust as a sans-IO evaluator
+(the host answers its reads, here from inside the caller's transaction)
+and compiles to a small WebAssembly module. It is fail-closed: when it cannot
+be certain of OpenFGA's answer it refuses, and `Session.RustCheck` falls back
+to OpenFGA's Check. Build with `make rust` and `-tags rustcheck`. Its gates
+(`make test-rust`) run every check through both evaluators in the same
+transaction; see [docs/rustcheck.md](docs/rustcheck.md) for the design,
+the results, and the upstream nondeterminism they surfaced.
+
 ## Layout
 
 ```text
@@ -262,4 +273,5 @@ track/github.com/memoremix-ing/atomicfga.git/sts-0/
   internal/testdb/                                test databases
   tests/                                          upstream suites, Hegel
   bench/                                          benchmarks vs. original
+  rust/ rustcheck.go                              Rust port of Check (prototype)
 ```

@@ -1,0 +1,106 @@
+{
+ "goVersion": "go1.27.1",
+ "gomaxprocs": 8,
+ "measurements": [
+  {
+   "iterations": 5000,
+   "medianUs": 1348.75,
+   "p95Us": 3065.833,
+   "statements": 8.8128,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "direct-grant"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1342.917,
+   "p95Us": 2136.334,
+   "statements": 8.9702,
+   "tuples": 0,
+   "warmup": 500,
+   "workload": "empty-deny"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 2361.25,
+   "p95Us": 3733.375,
+   "statements": 21.9776,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "userset-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 6893.833,
+   "p95Us": 9387.792,
+   "statements": 56.6726,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "parent-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 846.375,
+   "p95Us": 1732.125,
+   "statements": 8.9922,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "intersection"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 631.167,
+   "p95Us": 2913.167,
+   "statements": 6.7008,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "exclusion"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1307.75,
+   "p95Us": 2768.792,
+   "statements": 8.884,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "cel-int"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1086.458,
+   "p95Us": 2568.167,
+   "statements": 8.8756,
+   "tuples": 100,
+   "warmup": 500,
+   "workload": "snapshot-100"
+  },
+  {
+   "iterations": 500,
+   "medianUs": 996.583,
+   "p95Us": 2502.792,
+   "statements": 8.922,
+   "tuples": 1000,
+   "warmup": 100,
+   "workload": "snapshot-1000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 886.542,
+   "p95Us": 2297.209,
+   "statements": 8.92,
+   "tuples": 10000,
+   "warmup": 10,
+   "workload": "snapshot-10000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 592.375,
+   "p95Us": 1467,
+   "statements": 8.92,
+   "tuples": 100000,
+   "warmup": 10,
+   "workload": "snapshot-100000"
+  }
+ ],
+ "target": "openfga-sqlite"
+}

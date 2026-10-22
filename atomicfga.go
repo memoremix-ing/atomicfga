@@ -84,6 +84,7 @@ type Engine struct {
 	stbl      sq.StatementBuilderType
 	committed *modelSet
 	sessions  registry
+	rust      rustState // the Rust Check evaluator (build tag rustcheck)
 }
 
 // constructMu serializes datastore construction: upstream's
@@ -174,6 +175,7 @@ func (e *Engine) Dialect() Dialect { return e.dialect }
 // Close stops the embedded server's background work.
 func (e *Engine) Close() {
 	e.server.Close()
+	e.rust.close()
 }
 
 // Tx is a transaction owned by the application. Construct one with [SQLTx]

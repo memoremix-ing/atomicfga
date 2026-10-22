@@ -1,4 +1,4 @@
-.PHONY: databases databases-down test test-unit test-upstream test-hegel bench vet
+.PHONY: databases databases-down test test-unit test-upstream test-hegel bench vet rust test-rust bench-rust wasm-size
 
 GO ?= GOTOOLCHAIN=local go
 
@@ -33,3 +33,21 @@ bench:
 	for i in 1 2; do $(GO) test -run '^$$' -bench 'BenchmarkReadParallel' -benchtime 1s -timeout 120m ./bench/ >> dist/bench-parallel.txt; done
 	python3 scripts/report.py dist/bench.txt
 	python3 scripts/report.py dist/bench-parallel.txt
+
+# The Rust port of Check (see docs/rustcheck.md), linked with -tags rustcheck.
+rust:
+	cd rust && cargo build --release
+
+# Conformance gates: Rust unit tests, OpenFGA's Check suites and matrices,
+# and the Hegel differential, each comparing every Rust answer with
+# OpenFGA's Check in the same transaction.
+test-rust: rust
+	cd rust && cargo test --release
+	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck' ./tests/
+
+bench-rust: rust
+	ATOMICFGA_WASMFGA=1 $(GO) test -tags rustcheck -count=1 -timeout 120m -run TestWasmfgaWorkloads ./bench/
+
+wasm-size:
+	cd rust && cargo build --profile wasm --target wasm32-unknown-unknown
+	@f=rust/target/wasm32-unknown-unknown/wasm/atomicfga_check.wasm; echo "$$(wc -c < $$f) bytes, $$(gzip -9 -c $$f | wc -c) gzipped"

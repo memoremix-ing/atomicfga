@@ -1,0 +1,106 @@
+{
+ "goVersion": "go1.27.1",
+ "gomaxprocs": 8,
+ "measurements": [
+  {
+   "iterations": 5000,
+   "medianUs": 273.416,
+   "p95Us": 336.875,
+   "statements": 4.178,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "direct-grant"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 452.791,
+   "p95Us": 542.333,
+   "statements": 8.146,
+   "tuples": 0,
+   "warmup": 500,
+   "workload": "empty-deny"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 1394.209,
+   "p95Us": 1920.167,
+   "statements": 21.2296,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "userset-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 3307.333,
+   "p95Us": 5999.75,
+   "statements": 54.0694,
+   "tuples": 13,
+   "warmup": 500,
+   "workload": "parent-chain-12"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 582.292,
+   "p95Us": 1053.875,
+   "statements": 8.7092,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "intersection"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 189.5,
+   "p95Us": 341.083,
+   "statements": 1.9002,
+   "tuples": 2,
+   "warmup": 500,
+   "workload": "exclusion"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 526.959,
+   "p95Us": 992.958,
+   "statements": 7.3932,
+   "tuples": 1,
+   "warmup": 500,
+   "workload": "cel-int"
+  },
+  {
+   "iterations": 5000,
+   "medianUs": 325.917,
+   "p95Us": 685.667,
+   "statements": 4.4296,
+   "tuples": 100,
+   "warmup": 500,
+   "workload": "snapshot-100"
+  },
+  {
+   "iterations": 500,
+   "medianUs": 323.25,
+   "p95Us": 563.709,
+   "statements": 4.234,
+   "tuples": 1000,
+   "warmup": 100,
+   "workload": "snapshot-1000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 297,
+   "p95Us": 373.417,
+   "statements": 4.16,
+   "tuples": 10000,
+   "warmup": 10,
+   "workload": "snapshot-10000"
+  },
+  {
+   "iterations": 50,
+   "medianUs": 280.75,
+   "p95Us": 425.583,
+   "statements": 4.32,
+   "tuples": 100000,
+   "warmup": 10,
+   "workload": "snapshot-100000"
+  }
+ ],
+ "target": "sqlite"
+}
