@@ -42,10 +42,12 @@ type doc
 //   - grant/revoke change who may edit a document and log it;
 //   - edit checks permission and, only if allowed, records an edit.
 //
-// Every transaction also increments one clock row. Under REPEATABLE READ
-// or SERIALIZABLE the clock orders committed transactions consistently with
-// their snapshots, so replaying the log by clock value must show that every
-// edit was authorized when it committed. If the check ran outside the
+// Every transaction also increments one clock row, so the clock orders
+// committed transactions consistently with their snapshots, and replaying
+// the log by clock value must show that every edit was authorized when it
+// committed. The clock is itself a write conflict between every pair of
+// transactions; TestCheckThenActNeedsSerializable covers histories without
+// one. If the check ran outside the
 // transaction (as with a separate OpenFGA server), a revocation could commit
 // between the check and the edit without any conflict being detected.
 type guarded struct {
@@ -300,4 +302,91 @@ func TestHegelCheckOutsideTheTransaction(t *testing.T) {
 		t.Skip("demonstration only; set ATOMICFGA_DEMONSTRATE_RACE=1")
 	}
 	runGuarded(t, true)
+}
+
+// TestCheckThenActNeedsSerializable runs, without guard_clock, a history no
+// serial order explains: an edit checks a grant, a revocation reads that
+// the document has no edits and deletes the grant, then the edit records
+// itself. REPEATABLE READ commits both; SERIALIZABLE must reject one.
+func TestCheckThenActNeedsSerializable(t *testing.T) {
+	var ran bool
+	for _, v := range variants() {
+		if v.dialect != atomicfga.Postgres {
+			continue
+		}
+		ran = true
+		for _, isolation := range []sql.IsolationLevel{sql.LevelRepeatableRead, sql.LevelSerializable} {
+			t.Run(fmt.Sprintf("%s/%s", v.name, isolation), func(t *testing.T) {
+				t.Parallel()
+				ctx := context.Background()
+				db := v.open(t)
+				db.Isolation = isolation
+				if _, err := db.SQL.Exec("CREATE TABLE edits (doc VARCHAR(64) PRIMARY KEY, n INT NOT NULL); INSERT INTO edits VALUES ('doc:1', 0)"); err != nil {
+					t.Fatal(err)
+				}
+				engine, err := atomicfga.New(db.Dialect)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(engine.Close)
+				anne := &openfgav1.TupleKey{Object: "doc:1", Relation: "editor", User: "user:anne"}
+
+				seed, commit, rollback := db.Begin(t, v.pgx)
+				defer rollback()
+				s := engine.Session(seed)
+				st, err := s.CreateStore(ctx, &openfgav1.CreateStoreRequest{Name: "check-then-act"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := parser.MustTransformDSLToProto(guardDSL)
+				if _, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{anne}}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := commit(); err != nil {
+					t.Fatal(err)
+				}
+
+				edit, commitEdit, rollbackEdit := db.Begin(t, v.pgx)
+				defer rollbackEdit()
+				r, err := engine.Session(edit).Check(ctx, &openfgav1.CheckRequest{StoreId: st.GetId(), TupleKey: &openfgav1.CheckRequestTupleKey{Object: anne.Object, Relation: anne.Relation, User: anne.User}})
+				if err != nil || !r.GetAllowed() {
+					t.Fatalf("edit's check: allowed=%v, error=%v", r.GetAllowed(), err)
+				}
+
+				revoke, commitRevoke, rollbackRevoke := db.Begin(t, v.pgx)
+				defer rollbackRevoke()
+				res, err := revoke.Query(ctx, "SELECT n FROM edits WHERE doc = 'doc:1'", nil)
+				if err != nil || fmt.Sprint(res.Rows[0][0]) != "0" {
+					t.Fatalf("revocation's read: %v, error=%v", res, err)
+				}
+				if _, err := engine.Session(revoke).Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Deletes: &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{{Object: anne.Object, Relation: anne.Relation, User: anne.User}}}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := commitRevoke(); err != nil {
+					t.Fatal(err)
+				}
+
+				_, err = edit.Exec(ctx, "UPDATE edits SET n = n + 1 WHERE doc = 'doc:1'", nil)
+				if err == nil {
+					err = commitEdit()
+				}
+				switch isolation {
+				case sql.LevelSerializable:
+					if !conflictErr(err) {
+						t.Fatalf("a nonserializable history committed (error %v)", err)
+					}
+				default:
+					if err != nil {
+						t.Fatalf("REPEATABLE READ now rejects the history (%v): reconsider the README's isolation advice", err)
+					}
+				}
+			})
+		}
+	}
+	if !ran {
+		t.Skip("needs PostgreSQL")
+	}
 }

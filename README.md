@@ -107,9 +107,16 @@ Isolation and locking:
 - Writes take the same row locks as upstream (`SELECT … FOR UPDATE` on the
   affected tuples), and hold them until **your** transaction ends.
 - To make a decision safe against concurrent revocation (check, then act on
-  the result), use `REPEATABLE READ` or `SERIALIZABLE` on PostgreSQL, and
-  write transactions (`BEGIN IMMEDIATE`) on SQLite and Turso. Retry aborted
-  transactions. `TestHegelCheckThenAct` verifies this property.
+  the result), use `SERIALIZABLE` on PostgreSQL, and write transactions
+  (`BEGIN IMMEDIATE`) on SQLite and Turso. Retry aborted transactions.
+  `TestHegelCheckThenAct` verifies this property.
+- `REPEATABLE READ` is not enough. It gives each transaction a stable
+  snapshot, but an edit can still commit after a revocation that did not see
+  it, unless the two also write a common row.
+  `TestCheckThenActNeedsSerializable` runs such a history at both levels.
+- `SERIALIZABLE` guarantees that some serial order explains every committed
+  transaction, not that it is commit order: an edit that overlaps a
+  revocation may still be ordered before it.
 - **SQLite and Turso:** begin transactions that write with
   `atomicfga.BeginImmediate(ctx, db)`, which takes the write lock up front as
   OpenFGA does (`BEGIN IMMEDIATE`) and behaves like `*sql.Tx`. tursogo's
