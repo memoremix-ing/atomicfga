@@ -11,8 +11,16 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[features]
+# Model-based testing against spec/check.qnt, which runs `quint` from PATH:
+# run it with the Makefile's test-spec target, which puts the pinned Quint
+# there.
+spec = []
+
 [dev-dependencies]
-# Model-based testing against spec/check.qnt (needs `quint` on PATH; see
-# the Makefile's test-spec target).
 quint-connect = "=0.1.2"
 anyhow = "1"
+
+[[test]]
+name = "quint"
+required-features = ["spec"]

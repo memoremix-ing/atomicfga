@@ -9,6 +9,10 @@ publish.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
+# Its imports exist only in a WebAssembly host: test it in browsers
+# (make test-web), not natively.
+test = false
+doctest = false
 
 [dependencies]
 atomicfga-check.workspace = true

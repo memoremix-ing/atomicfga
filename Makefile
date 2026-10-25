@@ -76,4 +76,4 @@ spec/node_modules: spec/package.json spec/package-lock.json
 
 test-spec: spec/node_modules
 	cd spec && ./node_modules/.bin/quint run check.qnt --max-samples 200 --max-steps 30 --invariants ClosureIsFixed BlockedNeverViews
-	cd rust && PATH="$(CURDIR)/spec/node_modules/.bin:$$PATH" cargo test --release -p atomicfga-check --test quint -- --nocapture
+	cd rust && PATH="$(CURDIR)/spec/node_modules/.bin:$$PATH" cargo test --release -p atomicfga-check --features spec --test quint -- --nocapture

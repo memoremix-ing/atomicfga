@@ -7,6 +7,8 @@
 [workspace]
 resolver = "2"
 members = ["check", "redb", "ffi", "web/evaluator", "web/redb"]
+# The browser modules build for wasm32-unknown-unknown only (make web).
+default-members = ["check", "redb", "ffi"]
 
 [workspace.package]
 version = "0.1.0"
