@@ -149,12 +149,17 @@ export class Evaluator {
   }
 }
 
-/** Runs `f` in a transaction of `adapter`: committed if `f` returns, aborted if it throws. */
+/**
+ * Runs `f` in a transaction of `adapter`: committed if `f` returns, aborted if it throws.
+ * `f` must be synchronous: the transaction would otherwise commit before the work it awaits.
+ */
 export function transaction(adapter, write, f) {
+  if (f?.constructor?.name === "AsyncFunction") throw new TypeError("transaction: the callback must be synchronous, not async");
   adapter.begin(write);
   let result;
   try {
     result = f();
+    if (typeof result?.then === "function") throw new TypeError("transaction: the callback returned a promise; it must be synchronous");
   } catch (e) {
     adapter.abort();
     throw e;

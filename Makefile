@@ -57,10 +57,11 @@ web/node_modules: web/package.json web/package-lock.json
 	cd web && npm ci --no-audit --no-fund
 	touch web/node_modules
 
-# Store adapters (redb in memory and on OPFS, SQLite on OPFS) against the
-# in-memory reference, in Chromium, Firefox and WebKit, across a browser
-# restart; then timings.
+# The JS glue's contracts in Node; then store adapters (redb in memory and
+# on OPFS, SQLite on OPFS) against the in-memory reference, in Chromium,
+# Firefox and WebKit, across a browser restart; then timings.
 test-web: web web/node_modules
+	node --test web/test/unit.mjs
 	node web/test/run.mjs
 
 wasm-size: web
