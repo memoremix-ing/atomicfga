@@ -103,7 +103,10 @@ func (s *Session) Aborted() error {
 // rolled the transaction back would run them outside it.
 func (s *Session) observe(err error) error {
 	if err != nil && abortsTransaction(err) {
-		a := &abortError{err}
+		var a *abortError
+		if !errors.As(err, &a) {
+			a = &abortError{err}
+		}
 		s.aborted.CompareAndSwap(nil, a)
 		return a
 	}

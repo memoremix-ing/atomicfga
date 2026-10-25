@@ -16,7 +16,8 @@ import (
 
 // fake is a Backend that records statements. Queries return one row holding
 // the query text. Statements containing "fail:<sqlstate>" fail with that
-// SQLSTATE, and "slow" ones take a while.
+// SQLSTATE, "busy" ones fail as a busy Turso database, and "slow" ones take a
+// while.
 type fake struct {
 	mu        sync.Mutex
 	log       []string
@@ -47,6 +48,9 @@ func (f *fake) run(query string) error {
 	}
 	if i := strings.Index(query, "fail:"); i >= 0 {
 		return stateErr(query[i+5 : i+10])
+	}
+	if strings.Contains(query, "busy") {
+		return errors.New("turso: database is busy")
 	}
 	return nil
 }
@@ -285,16 +289,26 @@ func TestCanceledQueriesAreDroppedWhileQueued(t *testing.T) {
 }
 
 func TestAbortedTransactionsRefuseFurtherStatements(t *testing.T) {
-	for _, state := range []string{"40001", "40P01", "25P02"} {
-		t.Run(state, func(t *testing.T) {
+	for _, c := range []struct {
+		name, failing string
+		backend       func(*fake) Backend
+	}{
+		{"40001", "SELECT fail:40001", func(f *fake) Backend { return pipelining{f} }},
+		{"40P01", "SELECT fail:40P01", func(f *fake) Backend { return pipelining{f} }},
+		{"25P02", "SELECT fail:25P02", func(f *fake) Backend { return pipelining{f} }},
+		{"turso busy", "SELECT busy", func(f *fake) Backend { return TursoErrors(f) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
 			f := &fake{}
-			b := Backend(pipelining{f})
 			db := OpenDB()
 			s := NewSession()
 			defer db.Close()
-			ctx := WithCall(context.Background(), s.Call(b))
-			if _, err := query(ctx, db, "SELECT fail:"+state); !errors.Is(err, ErrTransactionAborted) || s.Aborted() == nil {
-				t.Fatalf("got %v", err)
+			ctx := WithCall(context.Background(), s.Call(c.backend(f)))
+			if _, err := query(ctx, db, c.failing); !errors.Is(err, ErrTransactionAborted) || s.Aborted() == nil {
+				t.Fatalf("got %v (aborted: %v)", err, s.Aborted())
+			}
+			if a := s.Aborted().Error(); strings.Count(a, ErrTransactionAborted.Error()) != 1 {
+				t.Fatalf("abort wrapped twice: %s", a)
 			}
 			for _, q := range []func() error{
 				func() error { _, err := query(ctx, db, "SELECT after"); return err },
