@@ -67,9 +67,11 @@ fn ulid_ok(s: &str) -> bool {
         })
 }
 
-pub fn decode_condition(bytes: &[u8]) -> Option<Cond> {
+/// Decodes a stored condition. Only empty bytes mean no condition: anything
+/// else that does not decode is an error, never an unconditional tuple.
+pub fn decode_condition(bytes: &[u8]) -> Result<Option<Cond>, String> {
     if bytes.is_empty() {
-        return None;
+        return Ok(None);
     }
     #[derive(Deserialize)]
     struct C {
@@ -77,10 +79,14 @@ pub fn decode_condition(bytes: &[u8]) -> Option<Cond> {
         #[serde(default)]
         context: Option<Map<String, Value>>,
     }
-    serde_json::from_slice::<C>(bytes).ok().map(|c| Cond {
-        name: c.name,
-        context: c.context,
-    })
+    serde_json::from_slice::<C>(bytes)
+        .map(|c| {
+            Some(Cond {
+                name: c.name,
+                context: c.context,
+            })
+        })
+        .map_err(|e| format!("stored tuple condition: {e}"))
 }
 
 /// `user_type = 'userset'` and the restriction filter of the SQL datastores'
@@ -99,13 +105,15 @@ fn userset_matches(user: &str, allowed: &[crate::RelRef]) -> bool {
 }
 
 fn read(tuples: &impl Store, store: &str, r: &ReadReq) -> Answer {
-    let tuple = |o: &str, rel: &str, u: String, c: &[u8]| Tuple {
-        object: o.into(),
-        relation: rel.into(),
-        user: u,
-        condition: decode_condition(c),
+    let tuple = |o: &str, rel: &str, u: String, c: &[u8]| {
+        Ok(Tuple {
+            object: o.into(),
+            relation: rel.into(),
+            user: u,
+            condition: decode_condition(c)?,
+        })
     };
-    Ok(match r {
+    match r {
         ReadReq::User {
             object,
             relation,
@@ -130,7 +138,7 @@ fn read(tuples: &impl Store, store: &str, r: &ReadReq) -> Answer {
             .filter(|(u, _)| userset_matches(u, allowed))
             .map(|(u, c)| tuple(object, relation, u, &c))
             .collect(),
-    })
+    }
 }
 
 #[derive(Deserialize)]
@@ -437,7 +445,7 @@ impl Fga {
                         // tuple as read back, whose context is never absent (an
                         // empty one if none was written). So a request without a
                         // context conflicts even with an identical tuple.
-                        let same = match (decode_condition(&existing), &t.condition) {
+                        let same = match (decode_condition(&existing)?, &t.condition) {
                             (None, None) => true,
                             (Some(a), Some(b)) => {
                                 a.name == b.name
@@ -623,5 +631,56 @@ mod tests {
             write(json!({"name": "cx", "context": {"x": 0}}), true)["error"]["code"],
             "aborted"
         );
+    }
+
+    #[test]
+    fn malformed_stored_conditions_are_errors() {
+        // A guarded tuple whose guard is false denies; were malformed bytes
+        // read as "no condition", the unconditional user type would grant.
+        let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},
+            {"type":"doc","relations":{"viewer":{"this":{}}},
+             "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"user"},{"type":"user","condition":"guard"}]}}}}],
+            "conditions":{"guard":{"name":"guard","expression":"ok","parameters":{"ok":{"type_name":"TYPE_NAME_BOOL"}}}}}"#;
+        let s = MemoryStore::default();
+        let fga = Fga::default();
+        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        let check = || {
+            let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+            fga.check(
+                &s,
+                "s",
+                &serde_json::to_vec(&req).unwrap(),
+                Semantics::OpenFga,
+            )
+        };
+        let put = |c: &[u8]| s.put_tuple("s", "doc:1", "viewer", "user:anne", c).unwrap();
+        put(br#"{"name":"guard","context":{"ok":false}}"#);
+        assert_eq!(check()["allowed"], false);
+        let ignored = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}], "on_duplicate": "ignore"}});
+        for bad in [
+            &b"{"[..],
+            b"null",
+            b"[]",
+            b"\"guard\"",
+            b"{}",
+            br#"{"name":1}"#,
+            br#"{"name":"guard","context":[]}"#,
+        ] {
+            put(bad);
+            let got = check();
+            assert_eq!(
+                got["error"]["code"],
+                "internal_error",
+                "{}: {got}",
+                String::from_utf8_lossy(bad)
+            );
+            let got = fga.write(&s, "s", &serde_json::to_vec(&ignored).unwrap());
+            assert_eq!(
+                got["error"]["code"],
+                "internal_error",
+                "{}: {got}",
+                String::from_utf8_lossy(bad)
+            );
+        }
     }
 }
