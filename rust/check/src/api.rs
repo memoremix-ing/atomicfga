@@ -16,14 +16,16 @@
 
 use crate::compile::{self, Outcome};
 use crate::exec::{Answer, ReadReq};
+use crate::model::Model;
 use crate::model::RefKind;
 use crate::store::{Store, StoreMut};
 use crate::strings::*;
 use crate::validate::{validate_tuple_for_write, VErr};
-use crate::{Cond, Engine, Semantics, Tuple};
+use crate::{compile_stored, Cond, Semantics, Task, Tuple};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 /// Encodes a tuple's condition as stored: `{"name", "context"}`, or nothing.
 pub fn encode_condition(c: Option<&Cond>) -> Vec<u8> {
@@ -197,22 +199,38 @@ fn key_proto_ok(k: &KeyJson) -> bool {
             .is_none_or(|c| no_space(&c.name, 2, 256))
 }
 
-/// OpenFGA's API over a [`Store`]. It holds compiled models (by ID) and the
-/// server settings that matter; it holds no data.
+/// OpenFGA's API over a [`Store`]. It holds compiled models and the server
+/// settings that matter; it holds no data.
 #[derive(Default)]
 pub struct Fga {
-    engine: Engine,
+    models: Mutex<HashMap<(String, String), Compiled>>,
     /// Whether models may use `$expression` conditions (OpenFGA's
     /// `inline_expressions` experimental flag).
     pub inline_expressions: bool,
+}
+
+/// A model compiled from `source`, the bytes stored under its store and ID.
+/// It serves only reads of the same bytes: a store, transaction or adapter
+/// with something else under that key (another store's model, one written
+/// in an aborted transaction, a replacement) gets its own compiled model.
+struct Compiled {
+    source: Vec<u8>,
+    model: Result<Arc<Model>, String>,
 }
 
 impl Fga {
     /// `WriteAuthorizationModel`, under a model ID the caller chose (a ULID:
     /// the latest model is the greatest ID). Returns `{"authorization_model_id"}`
     /// or `{"error": {code, message}}` (or `{"refused"}` when the model
-    /// compiler cannot decide).
+    /// compiler cannot decide). Models are immutable: writing an ID again
+    /// succeeds only with the same model.
     pub fn write_model(&self, tx: &impl StoreMut, store: &str, id: &str, request: &[u8]) -> Value {
+        if !ulid_ok(id) {
+            return api_error(
+                "invalid_argument",
+                "AuthorizationModelId does not match the pattern",
+            );
+        }
         let options = compile::Options {
             inline_expressions: self.inline_expressions,
         };
@@ -231,16 +249,33 @@ impl Fga {
             m.insert("id".into(), json!(id));
         }
         let bytes = serde_json::to_vec(&model).unwrap_or_default();
-        let stored = tx.put_model(store, id, &bytes);
+        let stored = match tx.model(store, id) {
+            Ok(None) => tx.put_model(store, id, &bytes),
+            Ok(Some(existing)) if existing == bytes => Ok(()),
+            Ok(Some(_)) => {
+                return api_error(
+                    "invalid_argument",
+                    format!(
+                        "authorization model '{id}' already exists with a different definition"
+                    ),
+                )
+            }
+            Err(e) => Err(e),
+        };
         match stored {
             Ok(()) => json!({"authorization_model_id": id}),
             Err(e) => api_error("internal_error", e),
         }
     }
 
-    /// Resolves the request's model (or the latest), loading it into the
-    /// evaluator. Returns its ID.
-    fn resolve_model(&self, tx: &impl Store, store: &str, id: &str) -> Result<String, Value> {
+    /// Resolves the request's model (or the latest) as `tx` stores it: the
+    /// compiled model, or the reason this port cannot evaluate it.
+    fn resolve_model(
+        &self,
+        tx: &impl Store,
+        store: &str,
+        id: &str,
+    ) -> Result<Result<Arc<Model>, String>, Value> {
         let found = if id.is_empty() {
             tx.latest_model(store)
         } else {
@@ -260,16 +295,21 @@ impl Fga {
                 )
             });
         };
-        if !self.engine.has_model(&id) {
-            let js = serde_json::to_vec(
-                &json!({"model": serde_json::from_slice::<Value>(&model).unwrap_or_default()}),
-            )
-            .unwrap_or_default();
-            self.engine
-                .load_model(&js)
-                .map_err(|e| api_error("internal_error", e))?;
+        let key = (store.to_string(), id);
+        if let Some(c) = self.models.lock().unwrap().get(&key) {
+            if c.source == model {
+                return Ok(c.model.clone());
+            }
         }
-        Ok(id)
+        let compiled = compile_stored(&model);
+        self.models.lock().unwrap().insert(
+            key,
+            Compiled {
+                source: model,
+                model: compiled.clone(),
+            },
+        );
+        Ok(compiled)
     }
 
     /// `Write`: deletes, then writes, validated as OpenFGA validates them.
@@ -311,8 +351,8 @@ impl Fga {
         {
             return invalid("deletes take no condition");
         }
-        let model_id = match self.resolve_model(tx, store, &req.authorization_model_id) {
-            Ok(id) => id,
+        let model = match self.resolve_model(tx, store, &req.authorization_model_id) {
+            Ok(m) => m,
             Err(e) => return e,
         };
         let writes: Vec<Tuple> = req
@@ -378,7 +418,7 @@ impl Fga {
             }
         };
         if !writes.is_empty() {
-            let Some(Ok(model)) = self.engine.model(&model_id) else {
+            let Ok(model) = model else {
                 return refused("model could not be loaded");
             };
             for t in &writes {
@@ -529,14 +569,11 @@ impl Fga {
         if contextual.len() > MAX_CONTEXTUAL_TUPLES || !contextual.iter().all(key_proto_ok) {
             return invalid("invalid ContextualTupleKeys");
         }
-        let model_id = match self.resolve_model(tx, store, &req.authorization_model_id) {
-            Ok(id) => id,
+        let model = match self.resolve_model(tx, store, &req.authorization_model_id) {
+            Ok(m) => m,
             Err(e) => return e,
         };
-        let v = self
-            .engine
-            .check_with(&model_id, request, semantics)
-            .run(|r| read(tx, store, r));
+        let v = Task::new(model, request, semantics).run(|r| read(tx, store, r));
         // The evaluator reports errors by kind; give them OpenFGA's codes.
         match v.get("error") {
             Some(e) => {
@@ -550,15 +587,6 @@ impl Fga {
             }
             None => v,
         }
-    }
-}
-
-impl Engine {
-    pub(crate) fn model(
-        &self,
-        id: &str,
-    ) -> Option<Result<std::sync::Arc<crate::model::Model>, String>> {
-        self.models.lock().unwrap().get(id).cloned()
     }
 }
 
@@ -681,6 +709,94 @@ mod tests {
                 "{}: {got}",
                 String::from_utf8_lossy(bad)
             );
+        }
+    }
+
+    /// `doc#viewer` is `editor`, or (restrictive) `editor but not blocked`.
+    fn editor_model(restrictive: bool) -> Vec<u8> {
+        let viewer = if restrictive {
+            json!({"difference": {"base": {"computed_userset": {"relation": "editor"}}, "subtract": {"computed_userset": {"relation": "blocked"}}}})
+        } else {
+            json!({"computed_userset": {"relation": "editor"}})
+        };
+        serde_json::to_vec(
+            &json!({"schema_version": "1.1", "type_definitions": [{"type": "user"}, {"type": "doc",
+                "relations": {"editor": {"this": {}}, "blocked": {"this": {}}, "viewer": viewer},
+                "metadata": {"relations": {
+                    "editor": {"directly_related_user_types": [{"type": "user"}]},
+                    "blocked": {"directly_related_user_types": [{"type": "user"}]}
+                }}
+            }]}),
+        )
+        .unwrap()
+    }
+
+    const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    /// Anne may view doc:1 under the permissive model, not the restrictive.
+    fn anne_views(fga: &Fga, s: &MemoryStore, store: &str) -> Value {
+        for rel in ["editor", "blocked"] {
+            s.put_tuple(store, "doc:1", rel, "user:anne", b"").unwrap();
+        }
+        let req =
+            json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+        fga.check(
+            s,
+            store,
+            &serde_json::to_vec(&req).unwrap(),
+            Semantics::OpenFga,
+        )["allowed"]
+            .clone()
+    }
+
+    #[test]
+    fn compiled_models_serve_only_the_model_stored_under_their_key() {
+        // One model ID in two stores.
+        let fga = Fga::default();
+        let s = MemoryStore::default();
+        fga.write_model(&s, "a", ID, &editor_model(false));
+        fga.write_model(&s, "b", ID, &editor_model(true));
+        assert_eq!(anne_views(&fga, &s, "a"), true);
+        assert_eq!(anne_views(&fga, &s, "b"), false);
+        assert_eq!(anne_views(&fga, &s, "a"), true);
+        // One store and ID in two transactions or adapters (as when a model
+        // written in an aborted transaction is written again differently).
+        let (s1, s2) = (MemoryStore::default(), MemoryStore::default());
+        fga.write_model(&s1, "c", ID, &editor_model(false));
+        fga.write_model(&s2, "c", ID, &editor_model(true));
+        assert_eq!(anne_views(&fga, &s1, "c"), true);
+        assert_eq!(anne_views(&fga, &s2, "c"), false);
+        // A replacement behind the API's back.
+        s1.put_model("c", ID, &s2.model("c", ID).unwrap().unwrap())
+            .unwrap();
+        assert_eq!(anne_views(&fga, &s1, "c"), false);
+    }
+
+    #[test]
+    fn models_are_immutable() {
+        let fga = Fga::default();
+        let s = MemoryStore::default();
+        assert_eq!(
+            fga.write_model(&s, "s", ID, &editor_model(false))["authorization_model_id"],
+            ID
+        );
+        assert_eq!(anne_views(&fga, &s, "s"), true);
+        // The same model again is a no-op; a different one is rejected.
+        assert_eq!(
+            fga.write_model(&s, "s", ID, &editor_model(false))["authorization_model_id"],
+            ID
+        );
+        let r = fga.write_model(&s, "s", ID, &editor_model(true));
+        assert_eq!(r["error"]["code"], "invalid_argument", "{r}");
+        assert_eq!(anne_views(&fga, &s, "s"), true);
+        for id in [
+            "",
+            "not-a-ulid",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAU",
+            "01arz3ndektsv4rrffq69g5fav",
+        ] {
+            let r = fga.write_model(&s, "s", id, &editor_model(false));
+            assert_eq!(r["error"]["code"], "invalid_argument", "{id}: {r}");
         }
     }
 }

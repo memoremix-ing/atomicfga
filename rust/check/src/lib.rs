@@ -214,17 +214,9 @@ impl Engine {
         let id = serde_json::from_slice::<Id>(model)
             .map_err(|e| e.to_string())?
             .id;
-        // Stored models passed OpenFGA's checks under whatever flags it ran with.
-        let lenient = compile::Options {
-            inline_expressions: true,
-        };
-        let m = match (load.refuse, compile::compile(model, lenient)) {
-            (Some(why), _) => Err(why),
-            (None, compile::Outcome::Invalid { message, .. }) => {
-                Err(format!("invalid model: {message}"))
-            }
-            // Valid, or valid as far as this port decides (OpenFGA stored it).
-            (None, _) => Model::from_json(model).map(Arc::new),
+        let m = match load.refuse {
+            Some(why) => Err(why),
+            None => compile_stored(model),
         };
         self.models.lock().unwrap().insert(id.clone(), m);
         Ok(id)
@@ -235,17 +227,24 @@ impl Engine {
     }
 
     pub fn check_with(&self, model_id: &str, request: &[u8], semantics: Semantics) -> Task {
-        let model = self.models.lock().unwrap().get(model_id).cloned();
-        let io: IoRef = Rc::new(RefCell::new(Io::default()));
-        let state = match model {
-            None => State::Done(json!({"refused": format!("model {model_id} is not loaded")})),
-            Some(Err(why)) => State::Done(json!({"refused": format!("model: {why}")})),
-            Some(Ok(m)) => match start(m, io.clone(), request, semantics) {
-                Ok(fut) => State::Running(fut),
-                Err(done) => State::Done(done),
-            },
-        };
-        Task { io, state }
+        match self.models.lock().unwrap().get(model_id).cloned() {
+            None => Task::done(json!({"refused": format!("model {model_id} is not loaded")})),
+            Some(m) => Task::new(m, request, semantics),
+        }
+    }
+}
+
+/// Compiles a model as stored, or gives the reason this port cannot evaluate
+/// it.
+pub(crate) fn compile_stored(model: &[u8]) -> Result<Arc<Model>, String> {
+    // Stored models passed OpenFGA's checks under whatever flags it ran with.
+    let lenient = compile::Options {
+        inline_expressions: true,
+    };
+    match compile::compile(model, lenient) {
+        compile::Outcome::Invalid { message, .. } => Err(format!("invalid model: {message}")),
+        // Valid, or valid as far as this port decides (OpenFGA stored it).
+        _ => Model::from_json(model).map(Arc::new),
     }
 }
 
@@ -257,6 +256,32 @@ enum State {
 pub struct Task {
     io: IoRef,
     state: State,
+}
+
+impl Task {
+    /// A check of `request` against `model` (or its refusal reason).
+    pub(crate) fn new(
+        model: Result<Arc<Model>, String>,
+        request: &[u8],
+        semantics: Semantics,
+    ) -> Task {
+        let io: IoRef = Rc::new(RefCell::new(Io::default()));
+        let state = match model {
+            Err(why) => State::Done(json!({"refused": format!("model: {why}")})),
+            Ok(m) => match start(m, io.clone(), request, semantics) {
+                Ok(fut) => State::Running(fut),
+                Err(done) => State::Done(done),
+            },
+        };
+        Task { io, state }
+    }
+
+    fn done(v: Value) -> Task {
+        Task {
+            io: Rc::new(RefCell::new(Io::default())),
+            state: State::Done(v),
+        }
+    }
 }
 
 fn refused(why: impl std::fmt::Display) -> Value {

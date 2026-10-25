@@ -83,7 +83,7 @@ function workload(seed, n) {
     return t;
   };
   const txs = [];
-  const models = ["01HZZZMODEL000000000000001", "01HZZZMODEL000000000000002"];
+  const models = ["01HZZZ00000000000000000001", "01HZZZ00000000000000000002"];
   txs.push({ abort: false, ops: [{ kind: "model", id: models[0] }] });
   for (let i = 0; i < n; i++) {
     const ops = [];
@@ -240,7 +240,7 @@ async function run(phase) {
     for (const [name, open] of Object.entries(opens)) {
       const adapter = await open();
       try {
-        transaction(adapter, true, () => evaluator.writeModel(adapter, STORE, "01HZZZMODEL000000000000001", MODEL));
+        transaction(adapter, true, () => evaluator.writeModel(adapter, STORE, "01HZZZ00000000000000000001", MODEL));
         const loadMs = bulk(evaluator, adapter, 10000);
         const checks = [
           ["direct", { tuple_key: { object: "doc:d5", relation: "editor", user: "user:u35" } }],
