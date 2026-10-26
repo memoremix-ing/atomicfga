@@ -95,6 +95,8 @@ Errors:
   On SQLite and Turso, a busy error inside a transaction counts too: a
   deferred transaction could not become a write transaction. The session
   refuses all further statements. Roll back and retry the whole transaction.
+  `BeginImmediate` and `ImmediateTx.Commit` return errors matching
+  `ErrTransactionAborted` too when the database stayed busy.
 - Concurrent transactions inserting the same tuple fail as upstream does,
   with OpenFGA's own `Aborted` ("transactional write failed due to conflict").
   The failure is confined to the write's savepoint, but under `REPEATABLE

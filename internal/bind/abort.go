@@ -13,6 +13,18 @@ func (e *abortError) Error() string { return ErrTransactionAborted.Error() + ": 
 
 func (e *abortError) Unwrap() []error { return []error{ErrTransactionAborted, e.cause} }
 
+// Classify returns err, made to match [ErrTransactionAborted] too if it
+// means the database aborted (or will only roll back) the transaction. It
+// serves errors that do not pass through a Session, such as BEGIN's and
+// COMMIT's.
+func Classify(err error) error {
+	err = translateTurso(err)
+	if err == nil || errors.Is(err, ErrTransactionAborted) || !abortsTransaction(err) {
+		return err
+	}
+	return &abortError{err}
+}
+
 // abortsTransaction reports whether err means the database has aborted (or
 // will only roll back) the whole transaction, rather than one statement.
 func abortsTransaction(err error) bool {

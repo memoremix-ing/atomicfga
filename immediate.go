@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"sync"
+
+	"github.com/memoremix-ing/atomicfga/internal/bind"
 )
 
 // ImmediateTx is a SQLite or Turso transaction begun with BEGIN IMMEDIATE,
@@ -23,6 +25,10 @@ type ImmediateTx struct {
 // BeginTx, unless the driver is configured otherwise) that later needs to
 // write fails with a busy error if another connection committed meanwhile,
 // and has to be retried; tursogo's BeginTx is always deferred.
+//
+// If the write lock stays busy past the database's busy timeout, the error
+// matches [ErrTransactionAborted]: retry the transaction, as for any other
+// abort.
 func BeginImmediate(ctx context.Context, db *sql.DB) (*ImmediateTx, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -30,7 +36,7 @@ func BeginImmediate(ctx context.Context, db *sql.DB) (*ImmediateTx, error) {
 	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		_ = conn.Close()
-		return nil, err
+		return nil, bind.Classify(err)
 	}
 	return &ImmediateTx{conn: conn}, nil
 }
@@ -69,7 +75,8 @@ func (t *ImmediateTx) ExecContext(ctx context.Context, query string, args ...any
 }
 
 // Commit commits the transaction. If COMMIT fails, the transaction is
-// rolled back.
+// rolled back; the error matches [ErrTransactionAborted] if retrying the
+// transaction may succeed (the database was busy).
 func (t *ImmediateTx) Commit() error {
 	return t.end("COMMIT")
 }
@@ -94,6 +101,7 @@ func (t *ImmediateTx) end(stmt string) error {
 		// SQLite keeps the transaction open when COMMIT fails (for example
 		// while busy); do not return the connection to the pool inside it.
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return bind.Classify(err)
 	}
 	return err
 }

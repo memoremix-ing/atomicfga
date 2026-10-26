@@ -120,6 +120,39 @@ func TestConnectionsCannotBeBound(t *testing.T) {
 	}
 }
 
+// TestBeginImmediateWhileLockedAborts requires a writer that cannot take
+// the write lock in time to get an error to retry the transaction on, like
+// any other abort.
+func TestBeginImmediateWhileLockedAborts(t *testing.T) {
+	for _, d := range []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso} {
+		t.Run(string(d), func(t *testing.T) {
+			db := testdb.Open(t, d)
+			ctx := context.Background()
+			holder, err := atomicfga.BeginImmediate(ctx, db.SQL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer holder.Rollback()
+
+			// A second handle that waits only briefly for the lock.
+			driver := map[atomicfga.Dialect]string{atomicfga.SQLite: "sqlite", atomicfga.Turso: "turso"}[d]
+			impatient, err := sql.Open(driver, db.URI)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer impatient.Close()
+			impatient.SetMaxOpenConns(1)
+			if _, err := impatient.ExecContext(ctx, "PRAGMA busy_timeout = 10"); err != nil {
+				t.Fatal(err)
+			}
+			_, err = atomicfga.BeginImmediate(ctx, impatient)
+			if !errors.Is(err, atomicfga.ErrTransactionAborted) {
+				t.Fatalf("BEGIN IMMEDIATE while locked: %v", err)
+			}
+		})
+	}
+}
+
 func TestBeginImmediate(t *testing.T) {
 	for _, d := range []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso} {
 		t.Run(string(d), func(t *testing.T) {
