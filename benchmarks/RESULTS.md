@@ -50,19 +50,23 @@ committed. That shortcut was unsound (a transaction's snapshot may predate
 the commit, and a savepoint rollback can remove a model the transaction
 used), so every request with a model ID now runs the query. Every benchmark
 here passes one, so each pays one more statement and, on PostgreSQL, one
-more round trip that cannot overlap the check. Medians of three runs
+more round trip. On pgx, read-only calls naming a model whose content is
+known now send that query with their first reads instead, and discard
+their result if the model is not visible. Medians of three runs
 ([raw](results/visibility-query.txt)), relative to upstream:
 
-| in tx | before | after |
-|---|---:|---:|
-| PostgreSQL pgx, direct check | 1.01× | 1.88× |
-| PostgreSQL pgx, 8-way union | 0.86× | 1.16× |
-| PostgreSQL pgx, 10-level recursion | 1.21× | 1.23× |
-| PostgreSQL `database/sql`, direct check | 1.06× | 1.90× |
-| SQLite, direct check | 1.10× | 1.24× |
-| Turso, direct check | 1.46× | 1.84× |
+| in tx | shortcut | query | query, overlapped |
+|---|---:|---:|---:|
+| PostgreSQL pgx, direct check | 1.01× | 1.87× | 1.14× |
+| PostgreSQL pgx, 8-way union | 0.86× | 1.12× | 0.86× |
+| PostgreSQL pgx, 10-level recursion | 1.21× | 1.28× | 1.28× |
+| PostgreSQL `database/sql`, direct check | 1.06× | 1.96× | — |
+| SQLite, direct check | 1.10× | 1.27× | — |
+| Turso, direct check | 1.46× | 1.85× | — |
 
-The other tables have not been rerun since.
+("shortcut" is the unsound version; "—": `database/sql` cannot pipeline,
+so there is nothing to overlap with.) The other tables have not been rerun
+since.
 
 **What remains slower, and when it matters:**
 

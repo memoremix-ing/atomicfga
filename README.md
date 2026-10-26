@@ -204,8 +204,9 @@ against 48 µs on SQLite.)
 - Model resolution costs one indexed `LIMIT 1` query per request, in the
   transaction (upstream's PostgreSQL datastore reads every model row of the
   store to find the latest). The table above predates that query for
-  requests with a model ID: on PostgreSQL it adds a round trip, which makes a
-  single-query check about 1.9× upstream. See
+  requests with a model ID. With pgx, read-only calls send it together with
+  their first reads (a single-query check is 1.14× upstream); with
+  `database/sql` it adds a round trip (1.96×). See
   [results](benchmarks/RESULTS.md).
 - Results are buffered (required to share one connection), so ListObjects
   and ListUsers allocate per row and run 1.2–1.4× slower.

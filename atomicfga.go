@@ -82,6 +82,7 @@ type Engine struct {
 	datastore storage.OpenFGADatastore
 	server    *server.Server
 	stbl      sq.StatementBuilderType
+	models    *modelContents
 	sessions  registry
 	rust      rustState // the Rust Check evaluator (build tag rustcheck)
 }
@@ -143,7 +144,8 @@ func newEngine(dialect Dialect, opts ...Option) (*Engine, error) {
 		return nil, err
 	}
 
-	ds = bind.PropagateCancellation(ds)
+	models := newModelContents(1000)
+	ds = &modelDatastore{bind.PropagateCancellation(ds), models}
 	srv, err := server.NewServerWithOpts(append(o.server,
 		server.WithDatastore(ds),
 		server.WithContextPropagationToDatastore(true),
@@ -164,6 +166,7 @@ func newEngine(dialect Dialect, opts ...Option) (*Engine, error) {
 		datastore: ds,
 		server:    srv,
 		stbl:      stbl,
+		models:    models,
 	}, nil
 }
 

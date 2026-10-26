@@ -58,9 +58,9 @@ func (s *Session) RoundTrips() int64 { return s.bind.RoundTrips() }
 // call binds ctx to a new API call on the session. The returned function
 // must be called when the API call returns; it waits for any statement the
 // call still has in flight and discards the rest.
-func (s *Session) call(ctx context.Context) (context.Context, func()) {
+func (s *Session) call(ctx context.Context) (context.Context, *bind.Call) {
 	c := s.bind.Call(s.tx)
-	return bind.WithCall(ctx, c), c.Finish
+	return bind.WithCall(ctx, c), c
 }
 
 // modelRequest is an API request with an optional authorization model ID.
@@ -144,16 +144,18 @@ func (s *Session) latestModel(ctx context.Context, store string) (string, error)
 	return id, nil
 }
 
-// modelVisible reports whether the model exists in the bound transaction.
-func (s *Session) modelVisible(ctx context.Context, store, id string) (bool, error) {
-	var one int
-	err := s.engine.stbl.
+func (s *Session) visibilityQuery(store, id string) sq.SelectBuilder {
+	return s.engine.stbl.
 		Select("1").
 		From("authorization_model").
 		Where(sq.Eq{"store": store, "authorization_model_id": id}).
-		Limit(1).
-		QueryRowContext(ctx).
-		Scan(&one)
+		Limit(1)
+}
+
+// modelVisible reports whether the model exists in the bound transaction.
+func (s *Session) modelVisible(ctx context.Context, store, id string) (bool, error) {
+	var one int
+	err := s.visibilityQuery(store, id).QueryRowContext(ctx).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -165,16 +167,20 @@ func (s *Session) modelVisible(ctx context.Context, store, id string) (bool, err
 
 // do runs one API call on the session.
 func do[Req, Resp any](s *Session, ctx context.Context, req Req, method func(context.Context, Req) (Resp, error)) (Resp, error) {
-	ctx, done := s.call(ctx)
-	defer done()
+	ctx, c := s.call(ctx)
+	defer c.Finish()
 	resp, err := method(ctx, req)
 	return resp, s.wrap(err)
 }
 
 // doModel runs one API call that resolves an authorization model.
 func doModel[Req modelRequest, Resp any](s *Session, ctx context.Context, req Req, method func(context.Context, Req) (Resp, error)) (Resp, error) {
-	ctx, done := s.call(ctx)
-	defer done()
+	ctx, c := s.call(ctx)
+	defer c.Finish()
+	return resolveAndRun(s, ctx, req, method)
+}
+
+func resolveAndRun[Req modelRequest, Resp any](s *Session, ctx context.Context, req Req, method func(context.Context, Req) (Resp, error)) (Resp, error) {
 	req, err := resolveModel(ctx, s, req)
 	if err != nil {
 		var zero Resp
@@ -182,6 +188,68 @@ func doModel[Req modelRequest, Resp any](s *Session, ctx context.Context, req Re
 	}
 	resp, err := method(ctx, req)
 	return resp, s.wrap(err)
+}
+
+// doRead runs one API call that resolves an authorization model and has no
+// effects. When it can, it runs the call while the model's visibility query
+// is still on its way (see [Session.speculate]).
+func doRead[Req modelRequest, Resp any](s *Session, ctx context.Context, req Req, method func(context.Context, Req) (Resp, error)) (Resp, error) {
+	ctx, c := s.call(ctx)
+	defer c.Finish()
+	pinned, visible, ok := s.speculate(ctx, c, req)
+	if !ok {
+		return resolveAndRun(s, ctx, req, method)
+	}
+	resp, err := method(pinned, req)
+	if verr := visible(); verr != nil {
+		var zero Resp
+		return zero, s.wrap(verr)
+	}
+	return resp, s.wrap(err)
+}
+
+// speculate prepares a read-only call to run before its model's visibility
+// is known, saving the round trip the visibility query would otherwise take
+// on its own. It does so only when the call names a model whose content is
+// known, and the backend pipelines: the visibility query is then deferred to
+// ride along with the call's first statements. The call runs with the model
+// pinned to its context, so OpenFGA never reads the model in a transaction
+// that may not see it (see [modelDatastore]); a call whose model turns out
+// not to be visible returns authorization_model_not_found, as if it had not
+// run.
+func (s *Session) speculate(ctx context.Context, c *bind.Call, req modelRequest) (context.Context, func() error, bool) {
+	if req.Validate() != nil {
+		return nil, nil, false
+	}
+	store, id := req.GetStoreId(), req.GetAuthorizationModelId()
+	if id == "" {
+		return nil, nil, false
+	}
+	if _, err := ulid.Parse(id); err != nil {
+		return nil, nil, false
+	}
+	m := s.engine.models.get(store, id)
+	if m == nil {
+		return nil, nil, false
+	}
+	query, args, err := s.visibilityQuery(store, id).ToSql()
+	if err != nil {
+		return nil, nil, false
+	}
+	await, ok := c.Defer(ctx, query, args)
+	if !ok {
+		return nil, nil, false
+	}
+	return withPinnedModel(ctx, store, id, m), func() error {
+		res, err := await()
+		if err != nil {
+			return serverErrors.HandleError("", err)
+		}
+		if len(res.Rows) == 0 {
+			return serverErrors.AuthorizationModelNotFound(id)
+		}
+		return nil
+	}, true
 }
 
 // wrap replaces an error with [ErrTransactionAborted] when the database has
@@ -215,15 +283,15 @@ func (s *Session) Write(ctx context.Context, req *openfgav1.WriteRequest) (*open
 }
 
 func (s *Session) Check(ctx context.Context, req *openfgav1.CheckRequest) (*openfgav1.CheckResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.Check)
+	return doRead(s, ctx, req, s.engine.server.Check)
 }
 
 func (s *Session) BatchCheck(ctx context.Context, req *openfgav1.BatchCheckRequest) (*openfgav1.BatchCheckResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.BatchCheck)
+	return doRead(s, ctx, req, s.engine.server.BatchCheck)
 }
 
 func (s *Session) Expand(ctx context.Context, req *openfgav1.ExpandRequest) (*openfgav1.ExpandResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.Expand)
+	return doRead(s, ctx, req, s.engine.server.Expand)
 }
 
 func (s *Session) ReadAuthorizationModels(ctx context.Context, req *openfgav1.ReadAuthorizationModelsRequest) (*openfgav1.ReadAuthorizationModelsResponse, error) {
@@ -254,7 +322,7 @@ func (s *Session) WriteAssertions(ctx context.Context, req *openfgav1.WriteAsser
 }
 
 func (s *Session) ReadAssertions(ctx context.Context, req *openfgav1.ReadAssertionsRequest) (*openfgav1.ReadAssertionsResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.ReadAssertions)
+	return doRead(s, ctx, req, s.engine.server.ReadAssertions)
 }
 
 func (s *Session) ReadChanges(ctx context.Context, req *openfgav1.ReadChangesRequest) (*openfgav1.ReadChangesResponse, error) {
@@ -282,7 +350,7 @@ func (s *Session) ListStores(ctx context.Context, req *openfgav1.ListStoresReque
 }
 
 func (s *Session) ListObjects(ctx context.Context, req *openfgav1.ListObjectsRequest) (*openfgav1.ListObjectsResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.ListObjects)
+	return doRead(s, ctx, req, s.engine.server.ListObjects)
 }
 
 func (s *Session) StreamedListObjects(req *openfgav1.StreamedListObjectsRequest, srv openfgav1.OpenFGAService_StreamedListObjectsServer) error {
@@ -293,7 +361,7 @@ func (s *Session) StreamedListObjects(req *openfgav1.StreamedListObjectsRequest,
 }
 
 func (s *Session) ListUsers(ctx context.Context, req *openfgav1.ListUsersRequest) (*openfgav1.ListUsersResponse, error) {
-	return doModel(s, ctx, req, s.engine.server.ListUsers)
+	return doRead(s, ctx, req, s.engine.server.ListUsers)
 }
 
 type streamContext struct {

@@ -338,3 +338,41 @@ func TestAbortedTransactionsRefuseFurtherStatements(t *testing.T) {
 		}
 	})
 }
+
+func TestDeferredQueriesRideTheNextRoundTrip(t *testing.T) {
+	f := &fake{}
+	db := OpenDB()
+	defer db.Close()
+	s := NewSession()
+	c := s.Call(pipelining{f})
+	ctx := WithCall(context.Background(), c)
+
+	await, ok := c.Defer(ctx, "SELECT deferred", nil)
+	if !ok {
+		t.Fatal("pipelining backend refused to defer")
+	}
+	if n := len(f.statements()); n != 0 {
+		t.Fatalf("deferring sent %d statements", n)
+	}
+	if _, err := query(ctx, db, "SELECT next"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := await()
+	if err != nil || res.Rows[0][0] != "SELECT deferred" {
+		t.Fatalf("deferred result %v, %v", res, err)
+	}
+	if got := f.statements(); !slices.Equal(got, []string{"SELECT deferred", "SELECT next"}) || s.RoundTrips() != 1 {
+		t.Fatalf("statements %v in %d round trips", got, s.RoundTrips())
+	}
+
+	// Awaited with nothing else to ride along with, it is sent alone.
+	await, _ = c.Defer(ctx, "SELECT alone", nil)
+	if res, err := await(); err != nil || res.Rows[0][0] != "SELECT alone" || s.RoundTrips() != 2 {
+		t.Fatalf("lone deferred query: %v, %v, %d round trips", res, err, s.RoundTrips())
+	}
+	c.Finish()
+
+	if _, ok := NewSession().Call(f).Defer(ctx, "SELECT 1", nil); ok {
+		t.Fatal("a backend that cannot pipeline deferred a query")
+	}
+}

@@ -42,11 +42,36 @@ func (p *pending) finish(res *Result, err error) {
 // next one. The first caller to find the session idle becomes the leader and
 // drains the queue; nothing waits for a batch to fill.
 func (c *Call) pipelined(ctx context.Context, p Pipeliner, query string, args []any) (*Result, error) {
+	return c.await(p, c.enqueue(ctx, query, args))
+}
+
+// Defer queues a query without sending it: it rides along with the next
+// round trip the call's other statements make, or is sent on its own when
+// its result is awaited. It reports false, queuing nothing, if the backend
+// cannot pipeline (it would gain nothing). The result must be awaited
+// before the call finishes.
+func (c *Call) Defer(ctx context.Context, query string, args []any) (await func() (*Result, error), ok bool) {
+	p, ok := c.backend.(Pipeliner)
+	if !ok {
+		return nil, false
+	}
+	pr := c.enqueue(ctx, query, args)
+	return func() (*Result, error) { return c.await(p, pr) }, true
+}
+
+func (c *Call) enqueue(ctx context.Context, query string, args []any) *pending {
 	s := c.session
 	pr := &pending{call: c, ctx: ctx, sig: cancellation(ctx), stmt: Statement{query, args}, done: make(chan struct{})}
 	s.qmu.Lock()
 	s.queue = append(s.queue, pr)
 	s.qmu.Unlock()
+	return pr
+}
+
+// await waits for a queued query's result, leading round trips while the
+// session is idle.
+func (c *Call) await(p Pipeliner, pr *pending) (*Result, error) {
+	s := c.session
 	for {
 		select {
 		case <-pr.done:

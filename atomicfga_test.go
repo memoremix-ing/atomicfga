@@ -367,6 +367,42 @@ func TestModelCommittedAfterTheSnapshotIsNotServed(t *testing.T) {
 	})
 }
 
+// TestChecksOverlapTheVisibilityQuery requires a check naming a known model
+// to send its visibility query with its first read on pgx, and still to
+// refuse a model the transaction cannot see.
+func TestChecksOverlapTheVisibilityQuery(t *testing.T) {
+	each(t, func(t *testing.T, db *testdb.DB, pgx bool) {
+		if !pgx {
+			t.Skip("only pgx pipelines")
+		}
+		f := newFixture(t, db, pgx)
+		f.tx(func(s *atomicfga.Session, tx atomicfga.Tx) error {
+			trips := func(fn func()) (int64, int64) {
+				st, rt := s.Statements(), s.RoundTrips()
+				fn()
+				return s.Statements() - st, s.RoundTrips() - rt
+			}
+			f.mustCheck(s, f.model, "doc:1", "owner", "user:anne") // the model's content is now known
+			if st, rt := trips(func() { f.mustCheck(s, f.model, "doc:1", "owner", "user:anne") }); st != 2 || rt != 1 {
+				return fmt.Errorf("direct check: %d statements in %d round trips", st, rt)
+			}
+
+			f.appExec(tx, "SAVEPOINT app")
+			v2 := f.writeModel(s, docModelV2)
+			f.mustCheck(s, v2, "doc:1", "owner", "user:anne")
+			f.appExec(tx, "ROLLBACK TO SAVEPOINT app")
+			var err error
+			if _, rt := trips(func() { _, err = f.check(s, v2, "doc:1", "owner", "user:anne") }); rt != 1 {
+				return fmt.Errorf("check of a rolled-back model took %d round trips; was it overlapped?", rt)
+			}
+			if status.Code(err) != codes.Code(openfgav1.ErrorCode_authorization_model_not_found) {
+				return fmt.Errorf("overlapped check resolved a rolled-back model: %v", err)
+			}
+			return nil
+		})
+	})
+}
+
 func TestConcurrentCallsShareOneTransaction(t *testing.T) {
 	each(t, func(t *testing.T, db *testdb.DB, pgx bool) {
 		f := newFixture(t, db, pgx)
