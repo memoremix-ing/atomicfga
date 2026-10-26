@@ -6,10 +6,11 @@
 //! `FileSystemSyncAccessHandle` (imports `opfs_*`, in a worker).
 //!
 //! One transaction is open at a time: `begin_write` or `begin_read`, then
-//! `commit` or `abort`. The tuple and model functions mirror the
-//! evaluator's store imports: keys are UTF-8 in this module's memory, the
-//! result is at `result_ptr()`, and they return its length, `-1` (absent)
-//! or `-2 - n` (an error message of `n` bytes).
+//! `commit` or `abort` (errors when none is open). Beginning while one is
+//! open is an error, and leaves the open one intact. The tuple and model
+//! functions mirror the evaluator's store imports: keys are UTF-8 in this
+//! module's memory, the result is at `result_ptr()`, and they return its
+//! length, `-1` (absent) or `-2 - n` (an error message of `n` bytes).
 
 use atomicfga_check::store::{Store, StoreMut};
 use atomicfga_redb::{Read, Write};
@@ -114,7 +115,8 @@ fn with_store<T>(f: impl FnOnce(&dyn Store) -> Result<T, String>) -> Result<T, S
 fn with_write<T>(f: impl FnOnce(&Write) -> Result<T, String>) -> Result<T, String> {
     TX.with(|t| match &*t.borrow() {
         Tx::Write(tx) => f(&Write(tx)),
-        _ => Err("no write transaction is open".into()),
+        Tx::Read(_) => Err("no write transaction is open".into()),
+        Tx::None => Err("no transaction is open".into()),
     })
 }
 
@@ -170,41 +172,47 @@ pub extern "C" fn open(persistent: i32) -> i32 {
     }
 }
 
-/// Closes the database (and so its file).
+/// Closes the database (and so its file), aborting an open transaction.
 #[no_mangle]
 pub extern "C" fn close() -> i32 {
-    TX.with(|t| *t.borrow_mut() = Tx::None);
+    if let Tx::Write(tx) = TX.with(|t| std::mem::replace(&mut *t.borrow_mut(), Tx::None)) {
+        let _ = tx.abort();
+    }
     DB.with(|d| d.borrow_mut().take());
     0
 }
 
+/// Opens a transaction. The slot is checked first: asking redb for a second
+/// write transaction would wait forever for its writer lock.
 fn begin(write: bool) -> i32 {
-    let tx = DB.with(|d| {
-        let d = d.borrow();
-        let db = d
-            .as_ref()
-            .ok_or_else(|| "database is not open".to_string())?;
-        if write {
-            db.begin_write()
-                .map(|t| Tx::Write(Box::new(t)))
-                .map_err(|e| e.to_string())
-        } else {
-            db.begin_read()
-                .map(|t| Tx::Read(Box::new(t)))
-                .map_err(|e| e.to_string())
+    TX.with(|t| {
+        let mut t = t.borrow_mut();
+        if !matches!(*t, Tx::None) {
+            return error("a transaction is already open");
         }
-    });
-    match tx {
-        Ok(tx) => TX.with(|t| {
-            let mut t = t.borrow_mut();
-            if !matches!(*t, Tx::None) {
-                return error("a transaction is already open");
+        let tx = DB.with(|d| {
+            let d = d.borrow();
+            let db = d
+                .as_ref()
+                .ok_or_else(|| "database is not open".to_string())?;
+            if write {
+                db.begin_write()
+                    .map(|t| Tx::Write(Box::new(t)))
+                    .map_err(|e| e.to_string())
+            } else {
+                db.begin_read()
+                    .map(|t| Tx::Read(Box::new(t)))
+                    .map_err(|e| e.to_string())
             }
-            *t = tx;
-            0
-        }),
-        Err(e) => error(e),
-    }
+        });
+        match tx {
+            Ok(tx) => {
+                *t = tx;
+                0
+            }
+            Err(e) => error(e),
+        }
+    })
 }
 
 #[no_mangle]
@@ -217,28 +225,31 @@ pub extern "C" fn begin_read() -> i32 {
     begin(false)
 }
 
+/// Ends the open transaction, committing it or not. The transaction ends
+/// even if committing fails (its changes are then discarded).
+fn end(commit: bool) -> i32 {
+    let r = match TX.with(|t| std::mem::replace(&mut *t.borrow_mut(), Tx::None)) {
+        Tx::None => Err("no transaction is open".to_string()),
+        Tx::Read(_) => Ok(()),
+        Tx::Write(tx) if commit => tx.commit().map_err(|e| e.to_string()),
+        Tx::Write(tx) => tx.abort().map_err(|e| e.to_string()),
+    };
+    match r {
+        Ok(()) => 0,
+        Err(e) => error(e),
+    }
+}
+
 /// Commits the open transaction (a read transaction just ends).
 #[no_mangle]
 pub extern "C" fn commit() -> i32 {
-    match TX.with(|t| std::mem::replace(&mut *t.borrow_mut(), Tx::None)) {
-        Tx::Write(tx) => match (*tx).commit() {
-            Ok(()) => 0,
-            Err(e) => error(e),
-        },
-        _ => 0,
-    }
+    end(true)
 }
 
 /// Aborts the open transaction.
 #[no_mangle]
 pub extern "C" fn abort() -> i32 {
-    match TX.with(|t| std::mem::replace(&mut *t.borrow_mut(), Tx::None)) {
-        Tx::Write(tx) => match (*tx).abort() {
-            Ok(()) => 0,
-            Err(e) => error(e),
-        },
-        _ => 0,
-    }
+    end(false)
 }
 
 /// # Safety
