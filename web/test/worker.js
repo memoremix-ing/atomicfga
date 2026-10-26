@@ -115,39 +115,39 @@ function workload(seed, n) {
   return txs;
 }
 
+class Rollback extends Error {}
+
 // Runs the workload; returns every outcome, as JSON text.
 function replay(evaluator, adapter, txs) {
   const out = [];
-  for (const tx of txs) {
-    const write = tx.ops.some((o) => o.kind !== "check");
-    adapter.begin(write);
+  for (const t of txs) {
     try {
-      for (const op of tx.ops) {
-        let r;
-        if (op.kind === "model") r = evaluator.writeModel(adapter, STORE, op.id, MODEL);
-        else if (op.kind === "write") r = evaluator.write(adapter, STORE, op.req);
-        else r = evaluator.check(adapter, STORE, op.req, { canonical: op.canonical });
-        delete r.reads_total; // how many reads, not what they answered
-        out.push(JSON.stringify(r));
-      }
+      transaction(adapter, t.ops.some((o) => o.kind !== "check"), (tx) => {
+        for (const op of t.ops) {
+          let r;
+          if (op.kind === "model") r = evaluator.writeModel(tx, STORE, op.id, MODEL);
+          else if (op.kind === "write") r = evaluator.write(tx, STORE, op.req);
+          else r = evaluator.check(tx, STORE, op.req, { canonical: op.canonical });
+          delete r.reads_total; // how many reads, not what they answered
+          out.push(JSON.stringify(r));
+        }
+        if (t.abort) throw new Rollback();
+      });
     } catch (e) {
-      adapter.abort();
-      throw e;
+      if (!(e instanceof Rollback)) throw e;
     }
-    if (tx.abort) adapter.abort();
-    else adapter.commit();
   }
   return out;
 }
 
 // Every check of the workload's universe, in one read transaction.
 function probe(evaluator, adapter) {
-  return transaction(adapter, false, () => {
+  return transaction(adapter, false, (tx) => {
     const out = [];
     for (const object of OBJECTS)
       for (const relation of RELATIONS[object.split(":")[0]])
         for (const user of USERS.filter((u) => u !== "user:*")) {
-          const r = evaluator.check(adapter, STORE, { tuple_key: { object, relation, user }, context: { level: 2 } });
+          const r = evaluator.check(tx, STORE, { tuple_key: { object, relation, user }, context: { level: 2 } });
           delete r.reads_total;
           out.push(`${object}#${relation}@${user}: ${JSON.stringify(r)}`);
         }
@@ -222,8 +222,8 @@ function bulk(evaluator, adapter, tuples) {
   keys.length = tuples;
   return ms(() => {
     for (let i = 0; i < keys.length; i += 100)
-      transaction(adapter, true, () => {
-        const r = evaluator.write(adapter, STORE, { writes: { tuple_keys: keys.slice(i, i + 100) } });
+      transaction(adapter, true, (tx) => {
+        const r = evaluator.write(tx, STORE, { writes: { tuple_keys: keys.slice(i, i + 100) } });
         if (r.error) throw new Error(JSON.stringify(r.error));
       });
   })[0];
@@ -269,7 +269,7 @@ async function run(phase) {
     for (const [name, open] of Object.entries(opens)) {
       const adapter = await open();
       try {
-        transaction(adapter, true, () => evaluator.writeModel(adapter, STORE, "01HZZZ00000000000000000001", MODEL));
+        transaction(adapter, true, (tx) => evaluator.writeModel(tx, STORE, "01HZZZ00000000000000000001", MODEL));
         const loadMs = bulk(evaluator, adapter, 10000);
         const checks = [
           ["direct", { tuple_key: { object: "doc:d5", relation: "editor", user: "user:u35" } }],
@@ -278,13 +278,13 @@ async function run(phase) {
           ["exclusion", { tuple_key: { object: "doc:d77", relation: "can_read", user: "user:u77" } }],
         ];
         const timings = {};
-        transaction(adapter, false, () => {
+        transaction(adapter, false, (tx) => {
           for (const [label, req] of checks) {
-            for (let i = 0; i < 20; i++) evaluator.check(adapter, STORE, req);
+            for (let i = 0; i < 20; i++) evaluator.check(tx, STORE, req);
             const n = 300;
             const [t, r] = ms(() => {
               let last;
-              for (let i = 0; i < n; i++) last = evaluator.check(adapter, STORE, req);
+              for (let i = 0; i < n; i++) last = evaluator.check(tx, STORE, req);
               return last;
             });
             timings[label] = { us: Math.round((1000 * t) / n), allowed: r.allowed ?? r.error ?? r.refused, reads: r.reads_total };
@@ -294,7 +294,7 @@ async function run(phase) {
         if (name === "redb (OPFS)") bytes = (await (await (await navigator.storage.getDirectory()).getFileHandle(REDB_FILE)).getFile()).size;
         result.results.push({ name, loadMs: Math.round(loadMs), tuples: 10000, checks: timings, fileBytes: bytes });
       } finally {
-        adapter.close?.();
+        adapter.close();
       }
     }
   }

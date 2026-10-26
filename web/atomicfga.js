@@ -26,13 +26,61 @@
 // is present, null is absent. close discards an open transaction, may be
 // repeated, and everything else fails afterwards. web/test/lifecycle.js
 // checks all of this; every adapter must pass it.
+//
+// The evaluator never sees an adapter directly: its calls take the
+// transaction that `transaction(adapter, write, (tx) => ...)` opens. If a
+// store operation fails during a call, the call throws and the transaction
+// cannot commit, even if the callback catches the error: a write may have
+// been applied in part.
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/**
+ * A store operation failed during an evaluator call (or the call failed
+ * unexpectedly): the transaction's state is unknown, so it rolls back. The
+ * store's error is the `cause`.
+ */
+export class TransactionAbortedError extends Error {
+  constructor(cause) {
+    super(`atomicfga: a store operation failed, so the transaction rolls back: ${cause?.message ?? cause}`, { cause });
+    this.name = "TransactionAbortedError";
+  }
+}
+
+const MUTATORS = new Set(["tuplePut", "tupleDelete", "modelPut"]);
+
+// What a Transaction lets the evaluator do; module-private.
+class Scope {
+  open = true;
+  failure = null; // the TransactionAbortedError, once one occurred
+  constructor(adapter, write) {
+    this.adapter = adapter;
+    this.write = write;
+  }
+  fail(e) {
+    this.failure ??= e instanceof TransactionAbortedError ? e : new TransactionAbortedError(e);
+    return this.failure;
+  }
+}
+
+let scopeOf;
+
+/** An open transaction of `transaction()`, for evaluator calls. It cannot be made otherwise. */
+class Transaction {
+  #scope;
+  constructor(scope) {
+    this.#scope = scope;
+  }
+  static {
+    scopeOf = (tx) => (typeof tx === "object" && tx !== null && #scope in tx ? tx.#scope : null);
+  }
+}
+
 export class Evaluator {
   #exports;
-  #adapter = null;
+  #scope = null; // the Scope of the call in progress
+  #trapped = null; // the module's trap: its state is unknown afterwards
   #pending = new Uint8Array(0);
 
   static async load(source) {
@@ -68,32 +116,35 @@ export class Evaluator {
     }
   }
 
+  // Runs a store operation of the call in progress; a failure fails its
+  // transaction.
+  #store(method, ...args) {
+    const scope = this.#scope;
+    if (!scope) throw new Error("no transaction is bound");
+    try {
+      if (MUTATORS.has(method) && !scope.write) throw new Error("no write transaction is open");
+      return scope.adapter[method](...args);
+    } catch (e) {
+      scope.fail(e);
+      throw e;
+    }
+  }
+
   #imports() {
     const t = (p, l) => this.#text(p, l);
-    const a = () => {
-      if (!this.#adapter) throw new Error("no store adapter is bound");
-      return this.#adapter;
-    };
+    const a = (method, ...args) => this.#store(method, ...args);
+    const none = new Uint8Array(0);
     return {
-      tuple_get: (s, sl, o, ol, r, rl, u, ul) => this.#call(() => this.#result(a().tupleGet(t(s, sl), t(o, ol), t(r, rl), t(u, ul)))),
-      tuple_scan: (s, sl, o, ol, r, rl) => this.#call(() => this.#result(a().tupleScan(t(s, sl), t(o, ol), t(r, rl)))),
+      tuple_get: (s, sl, o, ol, r, rl, u, ul) => this.#call(() => this.#result(a("tupleGet", t(s, sl), t(o, ol), t(r, rl), t(u, ul)))),
+      tuple_scan: (s, sl, o, ol, r, rl) => this.#call(() => this.#result(a("tupleScan", t(s, sl), t(o, ol), t(r, rl)))),
       tuple_put: (s, sl, o, ol, r, rl, u, ul, v, vl) =>
-        this.#call(() => {
-          a().tuplePut(t(s, sl), t(o, ol), t(r, rl), t(u, ul), this.#memory().slice(v, v + vl));
-          return this.#result(new Uint8Array(0));
-        }),
+        this.#call(() => (a("tuplePut", t(s, sl), t(o, ol), t(r, rl), t(u, ul), this.#memory().slice(v, v + vl)), this.#result(none))),
       tuple_delete: (s, sl, o, ol, r, rl, u, ul) =>
-        this.#call(() => {
-          a().tupleDelete(t(s, sl), t(o, ol), t(r, rl), t(u, ul));
-          return this.#result(new Uint8Array(0));
-        }),
-      model_get: (s, sl, i, il) => this.#call(() => this.#result(a().modelGet(t(s, sl), t(i, il)))),
-      model_latest: (s, sl) => this.#call(() => this.#result(a().modelLatest(t(s, sl)))),
+        this.#call(() => (a("tupleDelete", t(s, sl), t(o, ol), t(r, rl), t(u, ul)), this.#result(none))),
+      model_get: (s, sl, i, il) => this.#call(() => this.#result(a("modelGet", t(s, sl), t(i, il)))),
+      model_latest: (s, sl) => this.#call(() => this.#result(a("modelLatest", t(s, sl)))),
       model_put: (s, sl, i, il, m, ml) =>
-        this.#call(() => {
-          a().modelPut(t(s, sl), t(i, il), this.#memory().slice(m, m + ml));
-          return this.#result(new Uint8Array(0));
-        }),
+        this.#call(() => (a("modelPut", t(s, sl), t(i, il), this.#memory().slice(m, m + ml)), this.#result(none))),
       fetch: (dst) => {
         this.#memory().set(this.#pending, dst);
       },
@@ -103,6 +154,16 @@ export class Evaluator {
   // Copies arguments into the module, calls `f` with (pointer, length)
   // pairs, and decodes the JSON response.
   #invoke(args, f) {
+    if (this.#trapped) throw new Error("atomicfga: the evaluator module trapped; load a new one", { cause: this.#trapped });
+    try {
+      return this.#pass(args, f);
+    } catch (e) {
+      if (e instanceof WebAssembly.RuntimeError) this.#trapped = e;
+      throw e;
+    }
+  }
+
+  #pass(args, f) {
     const e = this.#exports;
     const encoded = args.map((x) => (typeof x === "string" ? encoder.encode(x) : x));
     const ptrs = encoded.map((b) => {
@@ -119,12 +180,24 @@ export class Evaluator {
     }
   }
 
-  #with(adapter, f) {
-    this.#adapter = adapter;
+  // Runs an API call in `tx`. Anything that fails it (a store operation, a
+  // trap) fails the transaction too.
+  #with(tx, write, f) {
+    const scope = scopeOf(tx);
+    if (!scope) throw new TypeError("atomicfga: pass the transaction that transaction() gives its callback");
+    if (!scope.open) throw new Error("atomicfga: the transaction has ended");
+    if (scope.failure) throw scope.failure;
+    if (write && !scope.write) throw new TypeError("atomicfga: writing needs a write transaction");
+    if (this.#scope) throw new Error("atomicfga: the evaluator is already in a call");
+    this.#scope = scope;
     try {
-      return f();
+      const r = f();
+      if (scope.failure) throw scope.failure;
+      return r;
+    } catch (e) {
+      throw scope.fail(e);
     } finally {
-      this.#adapter = null;
+      this.#scope = null;
     }
   }
 
@@ -137,19 +210,19 @@ export class Evaluator {
     this.#exports.set_inline_expressions(on ? 1 : 0);
   }
 
-  /** WriteAuthorizationModel under the given ID (a ULID), in the adapter's open write transaction. */
-  writeModel(adapter, store, id, request) {
-    return this.#with(adapter, () => this.#invoke([store, id, Evaluator.#json(request)], (...a) => this.#exports.write_model(...a)));
+  /** WriteAuthorizationModel under the given ID (a ULID), in write transaction `tx`. */
+  writeModel(tx, store, id, request) {
+    return this.#with(tx, true, () => this.#invoke([store, id, Evaluator.#json(request)], (...a) => this.#exports.write_model(...a)));
   }
 
-  /** Write, in the adapter's open write transaction. */
-  write(adapter, store, request) {
-    return this.#with(adapter, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.write(...a)));
+  /** Write, in write transaction `tx`. */
+  write(tx, store, request) {
+    return this.#with(tx, true, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.write(...a)));
   }
 
-  /** Check, in the adapter's open transaction. `canonical` selects the canonical semantics. */
-  check(adapter, store, request, { canonical = false } = {}) {
-    return this.#with(adapter, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.check(...a, canonical ? 1 : 0)));
+  /** Check, in transaction `tx`. `canonical` selects the canonical semantics. */
+  check(tx, store, request, { canonical = false } = {}) {
+    return this.#with(tx, false, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.check(...a, canonical ? 1 : 0)));
   }
 
   /** The model compiler's verdict on a WriteAuthorizationModelRequest. */
@@ -159,20 +232,31 @@ export class Evaluator {
 }
 
 /**
- * Runs `f` in a transaction of `adapter`: committed if `f` returns, aborted if it throws.
- * `f` must be synchronous: the transaction would otherwise commit before the work it awaits.
+ * Runs `f(tx)` in a transaction of `adapter`, `tx` being what evaluator calls
+ * take: committed if `f` returns, aborted if it throws. A store failure during
+ * an evaluator call aborts it too (throwing a TransactionAbortedError), even
+ * if `f` caught the call's error. `f` must be synchronous: the transaction
+ * would otherwise commit before the work it awaits.
  */
 export function transaction(adapter, write, f) {
   if (f?.constructor?.name === "AsyncFunction") throw new TypeError("transaction: the callback must be synchronous, not async");
-  adapter.begin(write);
+  const scope = new Scope(adapter, !!write);
+  adapter.begin(!!write);
   let result;
   try {
-    result = f();
+    result = f(new Transaction(scope));
     if (typeof result?.then === "function") throw new TypeError("transaction: the callback returned a promise; it must be synchronous");
+    if (scope.failure) throw scope.failure;
   } catch (e) {
-    adapter.abort();
+    scope.open = false;
+    try {
+      adapter.abort();
+    } catch (a) {
+      throw new AggregateError([e, a], "atomicfga: the transaction failed, and aborting it failed too");
+    }
     throw e;
   }
+  scope.open = false;
   adapter.commit();
   return result;
 }

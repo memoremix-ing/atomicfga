@@ -11,8 +11,8 @@
 //! model compiler, writes are validated as OpenFGA's `Write` validates them,
 //! and checks run on the sans-IO evaluator, whose reads are answered from the
 //! store as OpenFGA's SQL datastores answer them. Validation fails before
-//! anything is written; if the store itself fails midway, the caller should
-//! roll back.
+//! anything is written; if the store itself fails midway (`internal_error`),
+//! the caller must roll back (the FFI and web/atomicfga.js do).
 
 use crate::compile::{self, Outcome};
 use crate::exec::{Answer, ReadReq};
@@ -313,9 +313,11 @@ impl Fga {
     }
 
     /// `Write`: deletes, then writes, validated as OpenFGA validates them.
-    /// Returns `{}` or `{"error": {code, message}}`; on an error nothing is
-    /// changed. A write whose validity this port cannot decide (a condition
-    /// parameter of an unsupported type) is `{"refused"}`.
+    /// Returns `{}` or `{"error": {code, message}}`; a rejected request
+    /// changes nothing, but an `internal_error` (the store failed) may leave
+    /// the write partly applied, and the caller must roll back. A write whose
+    /// validity this port cannot decide (a condition parameter of an
+    /// unsupported type) is `{"refused"}`.
     pub fn write(&self, tx: &impl StoreMut, store: &str, request: &[u8]) -> Value {
         let req: WriteRequestJson = match serde_json::from_slice(request) {
             Ok(r) => r,
