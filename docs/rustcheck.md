@@ -232,8 +232,33 @@ are excluded, as OpenFGA refuses to write them.
 
 The evaluator has a `Semantics::Canonical` mode, in which a cycle means only
 "not derivable along this path" (path-based loop checking is complete for
-positive rules, and stratification keeps negated subgoals off the path), and
-in which nothing is widened for OpenFGA's planner. `rust/check/tests/quint.rs`
+positive rules, and stratification keeps negated subgoals off the path), in
+which nothing is widened for OpenFGA's planner, and which has no depth limit:
+the visited path ends every cycle, so resolution ends over finitely many
+tuples.
+
+It answers within a stated domain, and refuses outside it (never answering
+false for want of resources):
+
+- **Stratified models.** OpenFGA accepts models in which a relation depends
+  on itself through an exclusion's subtrahend (a group whose members exclude
+  banned users, who may be groups' members). The least fixed point is not
+  defined there, so canonical checks of such a model refuse.
+- **Bounded work.** A check nests at most 100 deep (each level is native
+  stack: about 2.5 KiB in release builds, and the evaluator runs on stacks
+  it does not choose, WebAssembly's and cgo's) and makes at most 100,000
+  resolutions. The nesting bound applies in OpenFGA semantics too, whatever
+  the configured resolve node limit. Path-based search can take exponential
+  work (ten mutually nested groups, checking a user in none of them,
+  exceeds the bound); tabled or bottom-up evaluation would not, and is the
+  way to widen this domain.
+
+`rust/check/tests/canonical.rs` holds canonical checks to an independent
+oracle: the spec's rules evaluated bottom-up in Rust, over random universes
+far larger than the spec's (folder chains up to 70 long, extra and cyclic
+parents, nested and cyclic groups). Its 24 seeds make 3,688 checks, all
+equal to the least fixed point. Reinstating a depth limit of 25, or the
+cycle flag, fails it. `rust/check/tests/quint.rs`
 uses [quint-connect](https://github.com/informalsystems/quint-connect) to
 replay random traces of the spec (tuple writes, deletes, checks) against it:
 after every step the evaluator's last answer must equal the spec's. `make

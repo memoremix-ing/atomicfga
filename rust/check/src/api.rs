@@ -683,6 +683,143 @@ mod tests {
         }
     }
 
+    /// A check's answer, without its read count.
+    fn answer(mut v: Value) -> Value {
+        if let Some(m) = v.as_object_mut() {
+            m.remove("reads_total");
+        }
+        v
+    }
+
+    /// folder:0 -> folder:1 -> ... -> folder:n (parents), anne views folder:n.
+    fn chain(n: usize) -> (Fga, MemoryStore) {
+        let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},{"type":"folder",
+            "relations":{"parent":{"this":{}},"viewer":{"union":{"child":[{"this":{}},
+                {"tuple_to_userset":{"tupleset":{"relation":"parent"},"computed_userset":{"relation":"viewer"}}}]}}},
+            "metadata":{"relations":{"parent":{"directly_related_user_types":[{"type":"folder"}]},
+                "viewer":{"directly_related_user_types":[{"type":"user"}]}}}}]}"#;
+        let (fga, s) = (Fga::default(), MemoryStore::default());
+        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        for i in 0..n {
+            s.put_tuple(
+                "s",
+                &format!("folder:{i}"),
+                "parent",
+                &format!("folder:{}", i + 1),
+                b"",
+            )
+            .unwrap();
+        }
+        s.put_tuple("s", &format!("folder:{n}"), "viewer", "user:anne", b"")
+            .unwrap();
+        (fga, s)
+    }
+
+    #[test]
+    fn canonical_checks_have_no_depth_limit() {
+        let req = |user: &str| {
+            serde_json::to_vec(
+                &json!({"tuple_key": {"object": "folder:0", "relation": "viewer", "user": user}}),
+            )
+            .unwrap()
+        };
+        for n in [26, 60, crate::resolve::MAX_NESTING as usize - 1] {
+            let (fga, s) = chain(n);
+            let v = answer(fga.check(&s, "s", &req("user:anne"), Semantics::Canonical));
+            assert_eq!(v, json!({"allowed": true}), "chain of {n}");
+            let v = answer(fga.check(&s, "s", &req("user:bob"), Semantics::Canonical));
+            assert_eq!(v, json!({"allowed": false}), "chain of {n}");
+            let v = answer(fga.check(&s, "s", &req("user:anne"), Semantics::OpenFga));
+            assert_ne!(
+                v["allowed"], true,
+                "OpenFGA semantics keeps its depth limit: {v}"
+            );
+        }
+        // Beyond its bounds, a canonical check refuses rather than answers.
+        let (fga, s) = chain(crate::resolve::MAX_NESTING as usize + 10);
+        let v = answer(fga.check(&s, "s", &req("user:bob"), Semantics::Canonical));
+        assert!(
+            v["refused"].as_str().unwrap_or_default().contains("bounds"),
+            "{v}"
+        );
+    }
+
+    #[test]
+    fn canonical_checks_refuse_beyond_their_work_bound() {
+        // Ten groups, each a member of every other: proving that bob is in
+        // none means exploring every path.
+        let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},{"type":"group",
+            "relations":{"member":{"this":{}}},
+            "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]}}}}]}"#;
+        let (fga, s) = (Fga::default(), MemoryStore::default());
+        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        for a in 0..10 {
+            for b in 0..10 {
+                if a != b {
+                    s.put_tuple(
+                        "s",
+                        &format!("group:{a}"),
+                        "member",
+                        &format!("group:{b}#member"),
+                        b"",
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        s.put_tuple("s", "group:9", "member", "user:anne", b"")
+            .unwrap();
+        let check = |user: &str| {
+            let req =
+                json!({"tuple_key": {"object": "group:0", "relation": "member", "user": user}});
+            answer(fga.check(
+                &s,
+                "s",
+                &serde_json::to_vec(&req).unwrap(),
+                Semantics::Canonical,
+            ))
+        };
+        assert!(check("user:bob")["refused"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bounds"));
+        // A derivation found within the bound stands.
+        assert_eq!(check("user:anne"), json!({"allowed": true}));
+    }
+
+    #[test]
+    fn canonical_checks_refuse_unstratified_models() {
+        // Members exclude banned users, who may be any group's members.
+        let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},{"type":"group",
+            "relations":{"member":{"difference":{"base":{"this":{}},"subtract":{"computed_userset":{"relation":"banned"}}}},
+                "banned":{"this":{}}},
+            "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]},
+                "banned":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]}}}}]}"#;
+        let (fga, s) = (Fga::default(), MemoryStore::default());
+        let r = fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        assert_eq!(
+            r["authorization_model_id"], "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "OpenFGA accepts it: {r}"
+        );
+        s.put_tuple("s", "group:g", "member", "user:anne", b"")
+            .unwrap();
+        let req =
+            json!({"tuple_key": {"object": "group:g", "relation": "member", "user": "user:anne"}});
+        let req = serde_json::to_vec(&req).unwrap();
+        let v = answer(fga.check(&s, "s", &req, Semantics::Canonical));
+        assert!(
+            v["refused"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("group#member depends on itself"),
+            "{v}"
+        );
+        assert_eq!(
+            answer(fga.check(&s, "s", &req, Semantics::OpenFga)),
+            json!({"allowed": true})
+        );
+    }
+
     #[test]
     fn ignored_duplicates_compare_as_openfga_does() {
         let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},

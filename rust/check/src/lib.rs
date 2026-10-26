@@ -37,7 +37,13 @@ pub enum Semantics {
     /// The canonical semantics of `spec/check.qnt`: a relation holds iff it
     /// is derivable (least fixed point). A cycle only means "not derivable
     /// along this path"; there is no cycle flag to make an exclusion false,
-    /// and no planner whose strategies could disagree.
+    /// no planner whose strategies could disagree, and no depth limit.
+    ///
+    /// Within bounds: the model must be stratified (no relation depends on
+    /// itself through an exclusion's subtrahend; the semantics is undefined
+    /// otherwise), and a check may nest 100 deep and make 100,000
+    /// resolutions. Outside them the check refuses; it never answers false
+    /// for want of resources.
     Canonical,
 }
 
@@ -335,6 +341,13 @@ fn start(
     let tk = req
         .tuple_key
         .ok_or_else(|| refused("request without tuple_key"))?;
+    if semantics == Semantics::Canonical {
+        if let Some(why) = &model.unstratified {
+            return Err(refused(format!(
+                "the canonical semantics is undefined for this model: {why}"
+            )));
+        }
+    }
     if let Err(e) = validate_user_object_relation(&model, &tk.object, &tk.relation, &tk.user) {
         return Err(error(ApiError::Validation(e)));
     }
@@ -388,6 +401,7 @@ fn start(
         request_context: req.context,
         semantics,
         max_depth: config.resolve_node_limit,
+        resolutions: Default::default(),
     });
     Ok(resolve_check(
         cx,
@@ -493,9 +507,9 @@ impl Task {
         }
     }
 
-    /// Runs the task to completion, answering reads one at a time with
-    /// `read` (skipping reads that became moot), as a host whose store has
-    /// no round trips to save would.
+    /// Runs the task to completion, answering every pending read with
+    /// `read` at each step, as a host whose store has no round trips to save
+    /// would.
     pub fn run(&mut self, mut read: impl FnMut(&ReadReq) -> Answer) -> Value {
         let mut pending: std::collections::VecDeque<(u64, ReadReq)> = Default::default();
         let mut answers = vec![];
@@ -507,10 +521,12 @@ impl Task {
                     pending.retain(|(id, _)| !cancelled.contains(id));
                 }
             }
-            let Some((id, r)) = pending.pop_front() else {
+            if pending.is_empty() {
                 return self.finish(refused("no reads to answer"));
-            };
-            answers.push((id, read(&r)));
+            }
+            // All at once: each advance polls every live branch, so answering
+            // one read per advance would cost the square of the branches.
+            answers.extend(pending.drain(..).map(|(id, r)| (id, read(&r))));
         }
     }
 

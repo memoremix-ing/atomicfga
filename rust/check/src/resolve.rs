@@ -9,8 +9,21 @@ use crate::strings::*;
 use crate::validate::{validate_tuple_for_read, VErr};
 use crate::{ApiError, Tuple};
 use serde_json::{Map, Value};
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
+
+/// Resolution nests at most this deep in either semantics, whatever the
+/// configured limit, and refuses beyond: each level costs native stack
+/// (about 2.5 KiB in release builds, 7 KiB in debug builds), and the
+/// evaluator runs on stacks it does not choose (WebAssembly's, cgo's).
+pub const MAX_NESTING: u32 = 100;
+
+/// Canonical checks have no depth limit of their own: the visited path stops
+/// every cycle, so over finitely many tuples resolution ends. Their work is
+/// bounded instead, and beyond the bound they refuse (an unknown answer,
+/// never a false one).
+pub const CANONICAL_RESOLUTIONS: u64 = 100_000;
 
 pub struct Ctx {
     pub model: Arc<Model>,
@@ -19,8 +32,11 @@ pub struct Ctx {
     pub contextual: Vec<Tuple>,
     pub request_context: Option<Map<String, Value>>,
     pub semantics: crate::Semantics,
-    /// The server's resolve node limit ([`crate::Config`]).
+    /// The server's resolve node limit ([`crate::Config`]); OpenFGA
+    /// semantics only.
     pub max_depth: u32,
+    /// Resolutions so far (canonical semantics).
+    pub resolutions: Cell<u64>,
 }
 
 type Cx = Rc<Ctx>;
@@ -60,8 +76,25 @@ fn ready<'a>(o: Out) -> BoxFut<'a, Out> {
 /// `LocalChecker.ResolveCheck`.
 pub fn resolve_check(cx: Cx, req: Req) -> BoxFut<'static, Out> {
     Box::pin(async move {
-        if req.depth == cx.max_depth {
-            return Out::e(ApiError::TooComplex);
+        match cx.semantics {
+            crate::Semantics::OpenFga if req.depth == cx.max_depth => {
+                return Out::e(ApiError::TooComplex);
+            }
+            crate::Semantics::OpenFga => {}
+            crate::Semantics::Canonical => {
+                let n = cx.resolutions.get() + 1;
+                cx.resolutions.set(n);
+                if n > CANONICAL_RESOLUTIONS {
+                    return Out::refused(format!(
+                        "the canonical check exceeded its bounds ({CANONICAL_RESOLUTIONS} resolutions)"
+                    ));
+                }
+            }
+        }
+        if req.depth >= MAX_NESTING {
+            return Out::refused(format!(
+                "resolution exceeded its bounds (nested {MAX_NESTING} deep)"
+            ));
         }
         let key = tuple_key_string(&req.object, &req.relation, &req.user);
         if req.visited.contains(&key) {

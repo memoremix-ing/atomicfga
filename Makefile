@@ -43,7 +43,7 @@ rust:
 # OpenFGA's Check in the same transaction, and every compiled model with
 # OpenFGA's WriteAuthorizationModel.
 test-rust: rust test-spec
-	cd rust && cargo test --release -p atomicfga-check --lib -p atomicfga-redb
+	cd rust && cargo test --release -p atomicfga-check --lib --test canonical -p atomicfga-redb
 	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestRustConfiguredLimits|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA|TestHegelRustRedb' ./tests/
 
 bench-rust: rust

@@ -201,6 +201,9 @@ pub struct Model {
     alternatives: HashSet<String>,
     pub conditions: HashMap<String, Condition>,
     graph: Graph,
+    /// Why the canonical semantics is undefined for this model, if it is:
+    /// a relation depends on itself through an exclusion's subtrahend.
+    pub unstratified: Option<String>,
 }
 
 /// `typesystem.GetRelation` failures.
@@ -327,9 +330,83 @@ impl Model {
             conditions,
             graph,
             alternatives: HashSet::new(),
+            unstratified: None,
         };
         model.alternatives = crate::weighted::alternatives(&model);
+        model.unstratified = model.recursion_through_exclusion();
         Ok(model)
+    }
+
+    /// The relations `type#relation` depends on, each with whether through
+    /// an exclusion's subtrahend (non-monotonically).
+    fn dependencies(&self, t: &str, r: &str) -> Vec<((String, String), bool)> {
+        let mut out = vec![];
+        let Ok(rel) = self.get_relation(t, r) else {
+            return out;
+        };
+        let mut rewrites = vec![(&rel.rewrite, false)];
+        while let Some((rw, neg)) = rewrites.pop() {
+            match rw {
+                Rewrite::This => {
+                    for rr in &rel.directly_related {
+                        if !rr.relation().is_empty() {
+                            out.push(((rr.ty.clone(), rr.relation().to_string()), neg));
+                        }
+                    }
+                }
+                Rewrite::Computed(c) => out.push(((t.to_string(), c.clone()), neg)),
+                Rewrite::Ttu { tupleset, computed } => {
+                    out.push(((t.to_string(), tupleset.clone()), neg));
+                    if let Ok(ts) = self.get_relation(t, tupleset) {
+                        for target in &ts.directly_related {
+                            out.push(((target.ty.clone(), computed.clone()), neg));
+                        }
+                    }
+                }
+                Rewrite::Union(c) | Rewrite::Intersection(c) => {
+                    rewrites.extend(c.iter().map(|c| (c, neg)))
+                }
+                Rewrite::Difference(a, b) => rewrites.extend([(&**a, neg), (&**b, true)]),
+            }
+        }
+        out
+    }
+
+    /// A relation that depends on itself through an exclusion's subtrahend,
+    /// described, if any: the model is then not stratified. OpenFGA accepts
+    /// some such models (a group whose members exclude its banned members,
+    /// who may be groups' members).
+    fn recursion_through_exclusion(&self) -> Option<String> {
+        let mut nodes: Vec<(String, String)> = self
+            .types
+            .iter()
+            .flat_map(|(t, td)| td.relations.keys().map(move |r| (t.clone(), r.clone())))
+            .collect();
+        nodes.sort();
+        let reaches = |from: &(String, String), to: &(String, String)| {
+            let mut seen = HashSet::new();
+            let mut stack = vec![from.clone()];
+            while let Some(n) = stack.pop() {
+                if &n == to {
+                    return true;
+                }
+                if seen.insert(n.clone()) {
+                    stack.extend(self.dependencies(&n.0, &n.1).into_iter().map(|(d, _)| d));
+                }
+            }
+            false
+        };
+        for n in &nodes {
+            for (d, negative) in self.dependencies(&n.0, &n.1) {
+                if negative && reaches(&d, n) {
+                    return Some(format!(
+                        "{}#{} depends on itself through the subtrahend {}#{}",
+                        n.0, n.1, d.0, d.1
+                    ));
+                }
+            }
+        }
+        None
     }
 
     /// Whether OpenFGA may resolve a tuple-to-userset node with another
