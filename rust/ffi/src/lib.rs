@@ -1,7 +1,7 @@
 //! C ABI over `atomicfga-check` for hosts (atomicfga links it through cgo). Every message is JSON.
 //! A panic never crosses the boundary: it becomes a refusal.
 
-use atomicfga_check::{Engine, Task};
+use atomicfga_check::{Config, Engine, Task};
 use serde_json::{json, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -35,9 +35,17 @@ fn guarded(f: impl FnOnce() -> Value) -> Value {
         .unwrap_or_else(|_| json!({"refused": "panic in the evaluator"}))
 }
 
+/// An engine whose checks follow `config` (a [`atomicfga_check::Config`] in
+/// JSON, every field required). Returns null if `config` does not decode.
+///
+/// # Safety
+/// `config` must point to `len` readable bytes.
 #[no_mangle]
-pub extern "C" fn afc_engine_new() -> *mut Engine {
-    Box::into_raw(Box::default())
+pub unsafe extern "C" fn afc_engine_new(config: *const u8, len: usize) -> *mut Engine {
+    match serde_json::from_slice::<Config>(bytes(config, len)) {
+        Ok(c) => Box::into_raw(Box::new(Engine::new(c))),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// # Safety

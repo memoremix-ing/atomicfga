@@ -12,9 +12,6 @@ use serde_json::{Map, Value};
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// serverconfig.DefaultResolveNodeLimit
-const MAX_DEPTH: u32 = 25;
-
 pub struct Ctx {
     pub model: Arc<Model>,
     pub io: IoRef,
@@ -22,6 +19,8 @@ pub struct Ctx {
     pub contextual: Vec<Tuple>,
     pub request_context: Option<Map<String, Value>>,
     pub semantics: crate::Semantics,
+    /// The server's resolve node limit ([`crate::Config`]).
+    pub max_depth: u32,
 }
 
 type Cx = Rc<Ctx>;
@@ -61,7 +60,7 @@ fn ready<'a>(o: Out) -> BoxFut<'a, Out> {
 /// `LocalChecker.ResolveCheck`.
 pub fn resolve_check(cx: Cx, req: Req) -> BoxFut<'static, Out> {
     Box::pin(async move {
-        if req.depth == MAX_DEPTH {
+        if req.depth == cx.max_depth {
             return Out::e(ApiError::TooComplex);
         }
         let key = tuple_key_string(&req.object, &req.relation, &req.user);
@@ -106,11 +105,12 @@ pub fn resolve_check(cx: Cx, req: Req) -> BoxFut<'static, Out> {
 /// they read tuples from the user's side, failing on a condition error there
 /// that the default never encounters. So the default's outcome stands only
 /// where none of that can matter.
-fn widen(m: &Model, object_type: &str, relation: &str, mut out: Out) -> Out {
+fn widen(cx: &Ctx, object_type: &str, relation: &str, mut out: Out) -> Out {
+    let m = &cx.model;
     if m.conditional_below(object_type, relation) {
         return Out::refused("OpenFGA may resolve this with another strategy, which reads further conditional tuples");
     }
-    if out.has(crate::outcome::E) || out.depth + 3 >= MAX_DEPTH {
+    if out.has(crate::outcome::E) || out.depth + 3 >= cx.max_depth {
         return Out::refused(
             "OpenFGA may resolve this with another strategy, with other depth limits",
         );
@@ -417,7 +417,7 @@ fn check_direct_usersets(cx: Cx, req: Req, usersets: Vec<RelRef>) -> BoxFut<'sta
                 .userset_alternative(object_type, &req.relation, get_type(&req.user))
         {
             return match cx.semantics {
-                crate::Semantics::OpenFga => widen(&cx.model, object_type, &req.relation, out),
+                crate::Semantics::OpenFga => widen(&cx, object_type, &req.relation, out),
                 crate::Semantics::Canonical => out,
             };
         }
@@ -459,7 +459,7 @@ fn check_ttu<'a>(cx: Cx, req: Req, tupleset: &'a str, computed: &'a str) -> BoxF
             )
         {
             return match cx.semantics {
-                crate::Semantics::OpenFga => widen(&cx.model, object_type, &req.relation, out),
+                crate::Semantics::OpenFga => widen(&cx, object_type, &req.relation, out),
                 crate::Semantics::Canonical => out,
             };
         }

@@ -550,3 +550,101 @@ type doc
 		})
 	}
 }
+
+// TestRustConfiguredLimits holds the Rust evaluator to OpenFGA's Check under
+// configured resolve node limits, on chains of every length around each, and
+// requires it to refuse under settings it does not follow.
+func TestRustConfiguredLimits(t *testing.T) {
+	const model = `model
+  schema 1.1
+type user
+type group2
+  relations
+    define member: [user]
+type group
+  relations
+    define member: [group2#member]
+type folder
+  relations
+    define parent: [folder]
+    define viewer: [user] or viewer from parent
+type doc
+  relations
+    define viewer: [group#member]
+`
+	const chain = 12
+	tuples := []*openfgav1.TupleKey{
+		tk("doc:1", "viewer", "group:g#member"), tk("group:g", "member", "group2:g#member"), tk("group2:g", "member", "user:anne"),
+		tk(fmt.Sprintf("folder:c%d", chain), "viewer", "user:anne"),
+	}
+	for i := range chain {
+		tuples = append(tuples, tk(fmt.Sprintf("folder:c%d", i), "parent", fmt.Sprintf("folder:c%d", i+1)))
+	}
+	checks := []*openfgav1.CheckRequestTupleKey{{Object: "doc:1", Relation: "viewer", User: "user:anne"}}
+	for i := range chain + 1 {
+		for _, user := range []string{"user:anne", "user:bob"} {
+			checks = append(checks, &openfgav1.CheckRequestTupleKey{Object: fmt.Sprintf("folder:c%d", i), Relation: "viewer", User: user})
+		}
+	}
+	setup := func(t *testing.T, v variant, opts ...server.OpenFGAServiceV1Option) (*atomicfga.Session, string) {
+		db := v.open(t)
+		engine, err := atomicfga.New(db.Dialect, atomicfga.WithServerOptions(opts...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(engine.Close)
+		ctx := context.Background()
+		tx, _, rollback, err := db.BeginTx(ctx, v.pgx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = rollback() })
+		s := engine.Session(tx)
+		st, err := s.CreateStore(ctx, &openfgav1.CreateStoreRequest{Name: "limits"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := parser.MustTransformDSLToProto(model)
+		if _, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: "1.1", TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: tuples}}); err != nil {
+			t.Fatal(err)
+		}
+		return s, st.GetId()
+	}
+	ctx := context.Background()
+	for _, v := range variants() {
+		t.Run(v.name, func(t *testing.T) {
+			for _, limit := range []uint32{1, 2, 3, 4, 5, 6, 8, 10, 25} {
+				t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+					s, store := setup(t, v, server.WithResolveNodeLimit(limit))
+					gate := newRustGate(t, fmt.Sprintf("%s, limit %d", v.name, limit))
+					outcomes := map[string]bool{}
+					for _, c := range checks {
+						resp, err, _ := gate.compare(ctx, s, &openfgav1.CheckRequest{StoreId: store, TupleKey: c})
+						code, _ := checkOutcome(resp, err)
+						outcomes[code] = true
+					}
+					if gate.answered == 0 {
+						t.Error("the Rust evaluator refused every check")
+					}
+					if limit < chain && !outcomes[fmt.Sprintf("error %d", openfgav1.ErrorCode_authorization_model_resolution_too_complex)] {
+						t.Errorf("no check reached the limit: outcomes %v", outcomes)
+					}
+				})
+			}
+			for name, opts := range map[string][]server.OpenFGAServiceV1Option{
+				"weighted graph check": {server.WithExperimentals(config.ExperimentalWeightedGraphCheck)},
+			} {
+				t.Run(name, func(t *testing.T) {
+					s, store := setup(t, v, opts...)
+					_, err := s.RustCheckStrict(ctx, &openfgav1.CheckRequest{StoreId: store, TupleKey: checks[0]})
+					if !errors.Is(err, atomicfga.ErrRustRefused) {
+						t.Errorf("RustCheckStrict: %v, want a refusal", err)
+					}
+				})
+			}
+		})
+	}
+}

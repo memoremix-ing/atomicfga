@@ -41,6 +41,26 @@ pub enum Semantics {
     Canonical,
 }
 
+/// The OpenFGA server settings a check's answer depends on, beyond the
+/// model and the request. The host must pass the server's actual values (and
+/// refuse to use this evaluator under settings it does not model).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    /// `server.WithResolveNodeLimit`: resolution deeper than this is too
+    /// complex.
+    pub resolve_node_limit: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            // serverconfig.DefaultResolveNodeLimit
+            resolve_node_limit: 25,
+        }
+    }
+}
+
 /// One step of a [`Task`].
 pub enum Step {
     /// Reads to answer, and earlier reads whose answers are no longer
@@ -186,9 +206,18 @@ impl From<TupleKeyJson> for Tuple {
 #[derive(Default)]
 pub struct Engine {
     models: Mutex<HashMap<String, Result<Arc<Model>, String>>>,
+    config: Config,
 }
 
 impl Engine {
+    /// An engine whose checks follow `config`.
+    pub fn new(config: Config) -> Engine {
+        Engine {
+            models: Mutex::default(),
+            config,
+        }
+    }
+
     pub fn has_model(&self, id: &str) -> bool {
         self.models.lock().unwrap().contains_key(id)
     }
@@ -229,7 +258,7 @@ impl Engine {
     pub fn check_with(&self, model_id: &str, request: &[u8], semantics: Semantics) -> Task {
         match self.models.lock().unwrap().get(model_id).cloned() {
             None => Task::done(json!({"refused": format!("model {model_id} is not loaded")})),
-            Some(m) => Task::new(m, request, semantics),
+            Some(m) => Task::new(m, request, semantics, self.config),
         }
     }
 }
@@ -264,11 +293,12 @@ impl Task {
         model: Result<Arc<Model>, String>,
         request: &[u8],
         semantics: Semantics,
+        config: Config,
     ) -> Task {
         let io: IoRef = Rc::new(RefCell::new(Io::default()));
         let state = match model {
             Err(why) => State::Done(json!({"refused": format!("model: {why}")})),
-            Ok(m) => match start(m, io.clone(), request, semantics) {
+            Ok(m) => match start(m, io.clone(), request, semantics, config) {
                 Ok(fut) => State::Running(fut),
                 Err(done) => State::Done(done),
             },
@@ -298,6 +328,7 @@ fn start(
     io: IoRef,
     request: &[u8],
     semantics: Semantics,
+    config: Config,
 ) -> Result<BoxFut<'static, Out>, Value> {
     let req: CheckRequestJson =
         serde_json::from_slice(request).map_err(|e| refused(format!("request JSON: {e}")))?;
@@ -356,6 +387,7 @@ fn start(
         contextual,
         request_context: req.context,
         semantics,
+        max_depth: config.resolve_node_limit,
     });
     Ok(resolve_check(
         cx,

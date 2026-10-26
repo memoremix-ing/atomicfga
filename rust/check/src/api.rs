@@ -21,7 +21,7 @@ use crate::model::RefKind;
 use crate::store::{Store, StoreMut};
 use crate::strings::*;
 use crate::validate::{validate_tuple_for_write, VErr};
-use crate::{compile_stored, Cond, Semantics, Task, Tuple};
+use crate::{compile_stored, Cond, Config, Semantics, Task, Tuple};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -207,6 +207,8 @@ pub struct Fga {
     /// Whether models may use `$expression` conditions (OpenFGA's
     /// `inline_expressions` experimental flag).
     pub inline_expressions: bool,
+    /// The server settings checks follow.
+    pub config: Config,
 }
 
 /// A model compiled from `source`, the bytes stored under its store and ID.
@@ -575,7 +577,7 @@ impl Fga {
             Ok(m) => m,
             Err(e) => return e,
         };
-        let v = Task::new(model, request, semantics).run(|r| read(tx, store, r));
+        let v = Task::new(model, request, semantics, self.config).run(|r| read(tx, store, r));
         // The evaluator reports errors by kind; give them OpenFGA's codes.
         match v.get("error") {
             Some(e) => {
@@ -631,6 +633,54 @@ mod tests {
             fga.write(&s, "s", &serde_json::to_vec(&w).unwrap())["error"]["code"],
             "write_failed_due_to_invalid_input"
         );
+    }
+
+    #[test]
+    fn checks_follow_the_configured_resolve_node_limit() {
+        // doc:1#viewer <- group:g#member <- group2:g#member <- user:anne
+        let model = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},
+            {"type":"group2","relations":{"member":{"this":{}}},
+             "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"}]}}}},
+            {"type":"group","relations":{"member":{"this":{}}},
+             "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"group2","relation":"member"}]}}}},
+            {"type":"doc","relations":{"viewer":{"this":{}}},
+             "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"group","relation":"member"}]}}}}]}"#;
+        let tuples = json!({"writes": {"tuple_keys": [
+            {"object": "doc:1", "relation": "viewer", "user": "group:g#member"},
+            {"object": "group:g", "relation": "member", "user": "group2:g#member"},
+            {"object": "group2:g", "relation": "member", "user": "user:anne"},
+        ]}});
+        let req =
+            json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+        let check = |limit: u32| {
+            let s = MemoryStore::default();
+            let fga = Fga {
+                config: Config {
+                    resolve_node_limit: limit,
+                },
+                ..Fga::default()
+            };
+            fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+            assert_eq!(
+                fga.write(&s, "s", &serde_json::to_vec(&tuples).unwrap()),
+                json!({})
+            );
+            fga.check(
+                &s,
+                "s",
+                &serde_json::to_vec(&req).unwrap(),
+                Semantics::OpenFga,
+            )
+        };
+        assert_eq!(check(25)["allowed"], true);
+        for limit in [0, 1, 2] {
+            let v = check(limit);
+            assert!(
+                v["error"]["code"] == "authorization_model_resolution_too_complex"
+                    || v.get("refused").is_some(),
+                "limit {limit}: {v}"
+            );
+        }
     }
 
     #[test]

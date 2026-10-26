@@ -44,7 +44,7 @@ rust:
 # OpenFGA's WriteAuthorizationModel.
 test-rust: rust test-spec
 	cd rust && cargo test --release -p atomicfga-check --lib -p atomicfga-redb
-	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA|TestHegelRustRedb' ./tests/
+	$(GO) test -tags rustcheck -count=1 -timeout 120m -run 'TestRustUpstream|TestHegelRustCheck|TestRustEdgeCases|TestRustConfiguredLimits|TestHegelRustCompileModel|TestRustCompileEdgeCases|TestHegelWeightedGraphMatchesOpenFGA|TestHegelRustRedb' ./tests/
 
 bench-rust: rust
 	ATOMICFGA_WASMFGA=1 $(GO) test -tags rustcheck -count=1 -timeout 120m -run TestWasmfgaWorkloads ./bench/

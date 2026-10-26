@@ -13,7 +13,7 @@ typedef struct { uint8_t *ptr; size_t len; size_t cap; } afc_buf;
 typedef struct afc_engine afc_engine;
 typedef struct afc_task afc_task;
 
-afc_engine *afc_engine_new(void);
+afc_engine *afc_engine_new(const uint8_t *config, size_t len);
 void afc_engine_free(afc_engine *e);
 bool afc_engine_has_model(const afc_engine *e, const uint8_t *id, size_t len);
 afc_buf afc_engine_load_model(const afc_engine *e, const uint8_t *json, size_t len);
@@ -42,6 +42,7 @@ import (
 
 	openfgav1 "github.com/openfga/api/proto/openfga/v1"
 
+	"github.com/openfga/openfga/pkg/server"
 	serverErrors "github.com/openfga/openfga/pkg/server/errors"
 	"github.com/openfga/openfga/pkg/storage"
 
@@ -62,16 +63,30 @@ func (e refusedError) Is(target error) bool { return target == ErrRustRefused }
 
 func (e refusedError) GRPCStatus() *status.Status { return status.New(codes.Unimplemented, e.Error()) }
 
-// rustState is the engine's Rust evaluator, which caches decoded models.
+// rustState is the engine's Rust evaluator, which caches decoded models,
+// configured with the server's check settings.
 type rustState struct {
-	once   sync.Once
-	mu     sync.RWMutex
-	engine *C.afc_engine
+	once     sync.Once
+	mu       sync.RWMutex
+	engine   *C.afc_engine
+	settings checkSettings
+	err      error // why there is no evaluator
 }
 
-func (r *rustState) get() *C.afc_engine {
-	r.once.Do(func() { r.engine = C.afc_engine_new() })
-	return r.engine
+func (r *rustState) get(srv *server.Server) (*C.afc_engine, checkSettings, error) {
+	r.once.Do(func() {
+		if r.settings, r.err = readCheckSettings(srv); r.err != nil {
+			return
+		}
+		config, _ := json.Marshal(r.settings)
+		if r.engine = C.afc_engine_new(ptr(config), C.size_t(len(config))); r.engine == nil {
+			r.err = fmt.Errorf("atomicfga: the Rust evaluator rejected its configuration %s", config)
+		}
+	})
+	if r.err == nil && r.engine == nil {
+		return nil, r.settings, errors.New("engine closed")
+	}
+	return r.engine, r.settings, r.err
 }
 
 func (r *rustState) close() {
@@ -121,9 +136,12 @@ func (s *Session) rustCheck(ctx context.Context, req *openfgav1.CheckRequest) (*
 	r := &s.engine.rust
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	engine := r.get()
-	if engine == nil {
-		return nil, refusedError{"engine closed"}
+	engine, settings, err := r.get(s.engine.server)
+	if err != nil {
+		return nil, refusedError{err.Error()}
+	}
+	if why := settings.refusal(req.GetStoreId()); why != "" {
+		return nil, refusedError{why}
 	}
 	modelID := req.GetAuthorizationModelId()
 	if err := s.loadRustModel(ctx, engine, req.GetStoreId(), modelID); err != nil {

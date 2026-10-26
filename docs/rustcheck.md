@@ -50,6 +50,16 @@ does (an RFC 3339 timestamp without an offset, a zoned IPv6 address, a numeric
 string beyond what it parses exactly), and for answers that are not
 determined upstream (below).
 
+**Server settings.** The evaluator follows the embedded server's resolve
+node limit (`server.WithResolveNodeLimit`), read from the constructed server
+(checksettings.go) and passed to the Rust engine when it is created. It
+refuses every check while access control is enabled (only OpenFGA's Check
+authorizes the caller) and for stores where the `weighted_graph_check` flag
+selects OpenFGA's other Check implementation. The remaining server settings
+change timing, not answers. If an upstream change keeps the settings from
+being read, every check is refused (and `TestCheckSettingsAreReadFromTheServer`
+fails).
+
 ## Upstream's answer is not always determined
 
 OpenFGA resolves operands concurrently, and intersection and exclusion answer
@@ -114,6 +124,7 @@ produced it.
 | `TestRustUpstream` | OpenFGA's Check assertion suites (consolidated and ABAC YAML) and generated Check matrices, with and without check optimizations | 6,908 | **0** | 2,156 |
 | `TestHegelRustCheck` | Hegel differential: random models (all rewrite operators, wildcards, usersets, recursive parents, conditions including unsupported ones), tuples written under one model version and checked under another, contextual tuples, request contexts with wrong types and forbidden characters, seeded parent/membership cycles and chains around the depth limit | 32,021 | **0** | 2,497 |
 | `TestRustEdgeCases` | cycles in subtrahends and intersections, chains at the depth limit, userset users | 120 | **0** | 0 |
+| `TestRustConfiguredLimits` | resolve node limits 1–10 and 25, on chains of every length up to 12; refusal under `weighted_graph_check` | 280 | **0** | 696 |
 
 Each row sums SQLite, Turso, PostgreSQL over database/sql and PostgreSQL over
 pgx. Error responses are compared by gRPC code (as upstream's own suites do).

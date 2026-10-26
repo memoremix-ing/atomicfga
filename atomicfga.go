@@ -62,7 +62,8 @@ type options struct {
 // Options that would share state between transactions are overridden: the
 // check query cache, check and ListObjects iterator caches, shared iterators
 // and the cache controller are always disabled, and contexts are always
-// propagated to the datastore.
+// propagated to the datastore. The Rust evaluator (Session.RustCheck) follows
+// the resolve node limit, and refuses under settings it does not model.
 func WithServerOptions(opts ...server.OpenFGAServiceV1Option) Option {
 	return func(o *options) { o.server = append(o.server, opts...) }
 }
