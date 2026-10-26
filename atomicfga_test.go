@@ -2,6 +2,7 @@ package atomicfga_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -288,6 +289,81 @@ func TestRolledBackModelIsNotServedFromCache(t *testing.T) {
 			}
 			return nil
 		})
+	})
+}
+
+// modelAbsent requires every way of naming model in s to report it missing,
+// and the latest model to be the fixture's.
+func (f *fixture) modelAbsent(s *atomicfga.Session, model string) error {
+	notFound := codes.Code(openfgav1.ErrorCode_authorization_model_not_found)
+	if _, err := f.check(s, model, "doc:1", "editor", "user:anne"); status.Code(err) != notFound {
+		return fmt.Errorf("check resolved the model: %v", err)
+	}
+	if _, err := s.ReadAuthorizationModel(context.Background(), &openfgav1.ReadAuthorizationModelRequest{StoreId: f.store, Id: model}); status.Code(err) != notFound {
+		return fmt.Errorf("model readable: %v", err)
+	}
+	// The fixture's model has no editor relation.
+	if _, err := f.check(s, "", "doc:1", "editor", "user:anne"); status.Code(err) != codes.Code(openfgav1.ErrorCode_validation_error) {
+		return fmt.Errorf("latest model is not the fixture's: %v", err)
+	}
+	return nil
+}
+
+func TestModelRolledBackToASavepointIsNotServed(t *testing.T) {
+	each(t, func(t *testing.T, db *testdb.DB, pgx bool) {
+		f := newFixture(t, db, pgx)
+		f.tx(func(s *atomicfga.Session, tx atomicfga.Tx) error {
+			f.appExec(tx, "SAVEPOINT app")
+			v2 := f.writeModel(s, docModelV2)
+			// Resolve it every way, filling the process-wide model caches.
+			f.mustCheck(s, v2, "doc:1", "editor", "user:anne")
+			f.mustCheck(s, "", "doc:1", "editor", "user:anne")
+			if _, err := s.ReadAuthorizationModel(context.Background(), &openfgav1.ReadAuthorizationModelRequest{StoreId: f.store, Id: v2}); err != nil {
+				return err
+			}
+			f.appExec(tx, "ROLLBACK TO SAVEPOINT app")
+			if err := f.modelAbsent(s, v2); err != nil {
+				return err
+			}
+			return f.modelAbsent(f.engine.Session(tx), v2)
+		})
+	})
+}
+
+func TestModelCommittedAfterTheSnapshotIsNotServed(t *testing.T) {
+	each(t, func(t *testing.T, db *testdb.DB, pgx bool) {
+		if db.Dialect == atomicfga.Postgres {
+			db.Isolation = sql.LevelRepeatableRead // a snapshot per transaction
+		}
+		f := newFixture(t, db, pgx)
+		var old atomicfga.Tx
+		if db.Dialect == atomicfga.Postgres {
+			_, tx, _, rollback := f.begin()
+			defer rollback()
+			old = tx
+		} else {
+			tx, err := db.Reader.BeginTx(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			old = atomicfga.SQLTx(tx)
+		}
+		f.appCount(old) // takes the snapshot
+
+		var v2 string
+		f.tx(func(s *atomicfga.Session, _ atomicfga.Tx) error {
+			v2 = f.writeModel(s, docModelV2)
+			return nil
+		})
+		// A later transaction sees and uses it, filling the caches.
+		f.tx(func(s *atomicfga.Session, _ atomicfga.Tx) error {
+			_, err := f.check(s, v2, "doc:1", "editor", "user:anne")
+			return err
+		})
+		if err := f.modelAbsent(f.engine.Session(old), v2); err != nil {
+			t.Fatal(err)
+		}
 	})
 }
 

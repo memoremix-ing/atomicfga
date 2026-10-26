@@ -82,7 +82,6 @@ type Engine struct {
 	datastore storage.OpenFGADatastore
 	server    *server.Server
 	stbl      sq.StatementBuilderType
-	committed *modelSet
 	sessions  registry
 	rust      rustState // the Rust Check evaluator (build tag rustcheck)
 }
@@ -165,7 +164,6 @@ func newEngine(dialect Dialect, opts ...Option) (*Engine, error) {
 		datastore: ds,
 		server:    srv,
 		stbl:      stbl,
-		committed: newModelSet(10000),
 	}, nil
 }
 
@@ -245,34 +243,3 @@ var ErrTransactionAborted = bind.ErrTransactionAborted
 // session's context. It indicates an upstream code path that atomicfga does
 // not yet route into the caller's transaction.
 var ErrNoSession = bind.ErrNoSession
-
-// modelSet remembers authorization models known to be committed, so that
-// sessions can skip the per-transaction visibility check. Models are
-// immutable and are never deleted, so a committed model stays visible.
-type modelSet struct {
-	mu  sync.RWMutex
-	m   map[string]struct{}
-	max int
-}
-
-func newModelSet(max int) *modelSet {
-	return &modelSet{m: map[string]struct{}{}, max: max}
-}
-
-func (s *modelSet) has(key string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	_, ok := s.m[key]
-	return ok
-}
-
-func (s *modelSet) add(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.m) >= s.max {
-		clear(s.m)
-	}
-	s.m[key] = struct{}{}
-}
-
-func modelKey(store, model string) string { return store + "\x00" + model }

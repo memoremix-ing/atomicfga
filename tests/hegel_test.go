@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -200,6 +202,7 @@ type machine struct {
 	oWorking, oCommitted mirror
 	committedMirrorStale bool
 	appSeq               int
+	discarded            []string // models written, then rolled back
 }
 
 func (m *machine) fail(tc hegel.TestCase, format string, args ...any) {
@@ -443,6 +446,7 @@ func (m *machine) RuleRollback(tc hegel.TestCase) {
 		m.fail(tc, "rollback: %v", err)
 	}
 	m.rollback = nil
+	m.discarded = append(m.discarded, modelIDs(m.working.models[len(m.committed.models):])...)
 	m.working = m.committed.clone()
 	m.oWorking = m.buildMirror(tc, m.working)
 	m.begin(tc)
@@ -468,7 +472,12 @@ func (m *machine) RuleDiscardedSavepoint(tc hegel.TestCase) {
 		_, _ = m.session.Write(m.ctx, req)
 	}
 	if hegel.Draw(tc, hegel.Booleans()) {
-		m.writeModel(tc, m.session, genModel(tc))
+		// Use the model before it is rolled back: it is then in the
+		// process-wide model caches.
+		id := m.writeModel(tc, m.session, genModel(tc)).GetId()
+		_, _ = m.session.Check(m.ctx, m.drawCheckWithModel(tc, id))
+		_, _ = m.session.ReadAuthorizationModel(m.ctx, &openfgav1.ReadAuthorizationModelRequest{StoreId: m.store, Id: id})
+		m.discarded = append(m.discarded, id)
 	}
 	if _, err := m.tx.Exec(m.ctx, "INSERT INTO app_audit (store, id) VALUES ('"+m.store+"', 'discarded')", nil); err != nil {
 		m.fail(tc, "application insert: %v", err)
@@ -483,6 +492,26 @@ func (m *machine) RuleDiscardedSavepoint(tc hegel.TestCase) {
 
 // --- Rules that only read. They may run concurrently on one session.
 
+// RuleDiscardedModel requests a model that was rolled back, which must not
+// be found whichever caches it reached.
+func (m *machine) RuleDiscardedModel(tc hegel.TestCase) {
+	m.mu.Lock()
+	discarded := slices.Clone(m.discarded)
+	m.mu.Unlock()
+	if len(discarded) == 0 {
+		return
+	}
+	tc.Event("RuleDiscardedModel")
+	id := drawFrom(tc, discarded)
+	notFound := codes.Code(openfgav1.ErrorCode_authorization_model_not_found)
+	if _, err := m.session.Check(m.ctx, m.drawCheckWithModel(tc, id)); status.Code(err) != notFound {
+		m.fail(tc, "Check with discarded model %s: %v", id, err)
+	}
+	if _, err := m.session.ReadAuthorizationModel(m.ctx, &openfgav1.ReadAuthorizationModelRequest{StoreId: m.store, Id: id}); status.Code(err) != notFound {
+		m.fail(tc, "ReadAuthorizationModel of discarded model %s: %v", id, err)
+	}
+}
+
 func (m *machine) snapshot() (state, mirror) {
 	// Reads never overlap mutations (rule groups), so no lock is needed;
 	// take one anyway for the race detector's benefit.
@@ -492,10 +521,14 @@ func (m *machine) snapshot() (state, mirror) {
 }
 
 func (m *machine) drawCheck(tc hegel.TestCase, s state) *openfgav1.CheckRequest {
+	return m.drawCheckWithModel(tc, m.drawModel(tc, s))
+}
+
+func (m *machine) drawCheckWithModel(tc hegel.TestCase, model string) *openfgav1.CheckRequest {
 	object, relation := drawObject(tc)
 	req := &openfgav1.CheckRequest{
 		StoreId:              m.store,
-		AuthorizationModelId: m.drawModel(tc, s),
+		AuthorizationModelId: model,
 		TupleKey:             &openfgav1.CheckRequestTupleKey{Object: object, Relation: relation, User: drawFrom(tc, subjects)},
 		Context:              drawContext(tc),
 		ContextualTuples:     drawContextualTuples(tc),

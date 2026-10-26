@@ -80,11 +80,10 @@ or after commit. With pgx this failed with "conn busy".
 Applications naturally wrap the same transaction in several places (a
 repository layer, helpers, goroutines). Everything a session knows about its
 transaction therefore lives in one shared `txState`: the statement queue and
-semaphore, the aborted flag, savepoint numbering, and which models are
-visible in or were written by the transaction. With separate state per
-wrapper, a model written through one wrapper and seen through another would
-be taken for committed, and stay resolvable from cache after a rollback; and
-two wrappers would send statements onto one connection concurrently.
+semaphore, the aborted flag, and savepoint numbering. With separate state per
+wrapper, two wrappers would send statements onto one connection
+concurrently, and one would keep running statements after another saw the
+transaction abort.
 
 The engine keeps a registry from transaction to state. Its keys are weak
 pointers to the transaction object (`weak.Pointer`), and the state holds no
@@ -156,9 +155,10 @@ The embedded server is shared by every transaction, so its caches are too.
     reaches `FindLatestAuthorizationModel` through `singleflight`, is never
     used.
   - With a model ID, it confirms the ID exists in the transaction (`SELECT 1
-    … LIMIT 1`), unless the engine already knows the model is committed. A
-    model is known to be committed once a transaction that did not write it has
-    seen it. Models are never deleted, so a committed model stays visible.
+    … LIMIT 1`), on every request. No answer is remembered: a model another
+    transaction committed may postdate this one's snapshot, and the caller
+    may roll back to a savepoint, without the session seeing it, after the
+    session saw a model this transaction wrote.
 
   Errors match upstream: `latest_authorization_model_not_found` and
   `authorization_model_not_found`. Request validation runs first, so invalid

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/oklog/ulid/v2"
@@ -41,15 +40,10 @@ type Session struct {
 // the transaction is reachable.
 type txState struct {
 	bind *bind.Session
-
-	mu      sync.Mutex
-	visible map[string]bool // models confirmed visible in this transaction
-	written map[string]bool // models written by this transaction
-	writing int             // model writes in progress
 }
 
 func newTxState() *txState {
-	return &txState{bind: bind.NewSession(), visible: map[string]bool{}, written: map[string]bool{}}
+	return &txState{bind: bind.NewSession()}
 }
 
 var _ openfgav1.OpenFGAServiceServer = (*Session)(nil)
@@ -85,6 +79,11 @@ type modelRequest interface {
 // transaction wrote but has not committed, or that was rolled back. Models
 // are immutable and identified by unique ULIDs, so once a model ID is known
 // to be visible, any cached copy of it is correct.
+//
+// Visibility is queried in the transaction on every request. Neither another
+// transaction's observation (this one's snapshot may predate the commit) nor
+// an earlier one in this transaction (the caller may since have rolled back
+// to a savepoint) can stand in for it.
 func resolveModel[R modelRequest](ctx context.Context, s *Session, req R) (R, error) {
 	if err := req.Validate(); err != nil {
 		return req, nil // let OpenFGA report the validation error
@@ -142,22 +141,11 @@ func (s *Session) latestModel(ctx context.Context, store string) (string, error)
 	if err != nil {
 		return "", serverErrors.HandleError("", err)
 	}
-	s.observeModel(store, id)
 	return id, nil
 }
 
+// modelVisible reports whether the model exists in the bound transaction.
 func (s *Session) modelVisible(ctx context.Context, store, id string) (bool, error) {
-	key := modelKey(store, id)
-	if s.engine.committed.has(key) {
-		return true, nil
-	}
-	s.mu.Lock()
-	seen := s.visible[key]
-	s.mu.Unlock()
-	if seen {
-		return true, nil
-	}
-
 	var one int
 	err := s.engine.stbl.
 		Select("1").
@@ -172,21 +160,7 @@ func (s *Session) modelVisible(ctx context.Context, store, id string) (bool, err
 	if err != nil {
 		return false, serverErrors.HandleError("", err)
 	}
-	s.observeModel(store, id)
 	return true, nil
-}
-
-// observeModel records a model that this transaction can see. A model the
-// transaction did not write itself must have been committed by another one.
-func (s *Session) observeModel(store, id string) {
-	key := modelKey(store, id)
-	s.mu.Lock()
-	s.visible[key] = true
-	ours := s.written[key] || s.writing > 0
-	s.mu.Unlock()
-	if !ours {
-		s.engine.committed.add(key)
-	}
 }
 
 // do runs one API call on the session.
@@ -272,24 +246,7 @@ func (s *Session) ReadAuthorizationModel(ctx context.Context, req *openfgav1.Rea
 }
 
 func (s *Session) WriteAuthorizationModel(ctx context.Context, req *openfgav1.WriteAuthorizationModelRequest) (*openfgav1.WriteAuthorizationModelResponse, error) {
-	return do(s, ctx, req, func(ctx context.Context, req *openfgav1.WriteAuthorizationModelRequest) (*openfgav1.WriteAuthorizationModelResponse, error) {
-		// Until the new ID is recorded, nothing this session observes may be
-		// treated as committed: it could be the model being written.
-		s.mu.Lock()
-		s.writing++
-		s.mu.Unlock()
-		resp, err := s.engine.server.WriteAuthorizationModel(ctx, req)
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.writing--
-		if err != nil {
-			return nil, err
-		}
-		key := modelKey(req.GetStoreId(), resp.GetAuthorizationModelId())
-		s.written[key] = true
-		s.visible[key] = true
-		return resp, nil
-	})
+	return do(s, ctx, req, s.engine.server.WriteAuthorizationModel)
 }
 
 func (s *Session) WriteAssertions(ctx context.Context, req *openfgav1.WriteAssertionsRequest) (*openfgav1.WriteAssertionsResponse, error) {
