@@ -559,8 +559,8 @@ func (m *machine) RuleListObjects(tc hegel.TestCase) {
 	got, err := m.session.ListObjects(m.ctx, req)
 	want, oerr := m.oracle.ListObjects(m.ctx, oreq)
 	g, w := slices.Sorted(slices.Values(got.GetObjects())), slices.Sorted(slices.Values(want.GetObjects()))
-	if outcome(err) != outcome(oerr) || !slices.Equal(g, w) {
-		m.fail(tc, "ListObjects %v: atomicfga %v %q, OpenFGA %v %q", req, g, outcome(err), w, outcome(oerr))
+	if joinedOutcome(err) != joinedOutcome(oerr) || !slices.Equal(g, w) {
+		m.fail(tc, "ListObjects %v: atomicfga %v %q, OpenFGA %v %q", req, g, joinedOutcome(err), w, joinedOutcome(oerr))
 	}
 	tc.Event(fmt.Sprintf("list objects nonempty=%v error=%v", len(g) > 0, err != nil))
 }
@@ -580,8 +580,8 @@ func (m *machine) RuleListUsers(tc hegel.TestCase) {
 	got, err := m.session.ListUsers(m.ctx, req)
 	want, oerr := m.oracle.ListUsers(m.ctx, oreq)
 	g, w := sortedUsers(got.GetUsers()), sortedUsers(want.GetUsers())
-	if outcome(err) != outcome(oerr) || !slices.Equal(g, w) {
-		m.fail(tc, "ListUsers %v: atomicfga %v %q, OpenFGA %v %q", req, g, outcome(err), w, outcome(oerr))
+	if joinedOutcome(err) != joinedOutcome(oerr) || !slices.Equal(g, w) {
+		m.fail(tc, "ListUsers %v: atomicfga %v %q, OpenFGA %v %q", req, g, joinedOutcome(err), w, joinedOutcome(oerr))
 	}
 	tc.Event(fmt.Sprintf("list users nonempty=%v error=%v", len(g) > 0, err != nil))
 }

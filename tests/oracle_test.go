@@ -76,6 +76,20 @@ func outcome(err error) string {
 	return fmt.Sprintf("%d %s", s.Code(), ulidPattern.ReplaceAllString(s.Message(), "<ulid>"))
 }
 
+// joinedOutcome is outcome for ListObjects and ListUsers, whose messages
+// join the errors of concurrent branches (errors.Join), in the order the
+// branches finished and once per failing branch. It compares the distinct
+// errors.
+func joinedOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	code, msg, _ := strings.Cut(outcome(err), " ")
+	lines := strings.Split(msg, "\n")
+	slices.Sort(lines)
+	return code + " " + strings.Join(slices.Compact(lines), "\n")
+}
+
 func tupleKeyString(k *openfgav1.TupleKey) string {
 	s := tuple.TupleKeyToString(k)
 	if c := k.GetCondition(); c != nil {
@@ -162,4 +176,28 @@ func nodesString(op string, nodes []*openfgav1.UsersetTree_Node) string {
 	}
 	slices.Sort(parts)
 	return "{" + op + " " + strings.Join(parts, " ") + "}"
+}
+
+func TestJoinedOutcomeComparesDistinctErrors(t *testing.T) {
+	err := func(msg string) error { return status.Error(2000, msg) }
+	same := [][2]error{
+		{err("a\nb"), err("b\na")},
+		{err("a"), err("a\na")},
+		{nil, nil},
+	}
+	for _, c := range same {
+		if joinedOutcome(c[0]) != joinedOutcome(c[1]) {
+			t.Errorf("%v and %v differ", c[0], c[1])
+		}
+	}
+	differ := [][2]error{
+		{err("a"), err("a\nb")},
+		{err("a"), status.Error(2001, "a")},
+		{err("a"), nil},
+	}
+	for _, c := range differ {
+		if joinedOutcome(c[0]) == joinedOutcome(c[1]) {
+			t.Errorf("%v and %v compare equal", c[0], c[1])
+		}
+	}
 }
