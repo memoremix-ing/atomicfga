@@ -1,7 +1,8 @@
 // Browser tests of the store adapters, run in a dedicated worker (where OPFS
 // is synchronous). Driven by web/test/run.mjs through index.html.
 //
-// Every backend replays one seeded workload (transactions of model writes,
+// Every adapter passes the lifecycle suite (web/test/lifecycle.js), and
+// every backend replays one seeded workload (transactions of model writes,
 // tuple writes and deletes, and checks; some transactions aborted), and its
 // outcomes must equal those of the in-memory reference adapter: the same
 // evaluator, so any difference is the store's. Persistence is checked
@@ -11,11 +12,13 @@ import { Evaluator, transaction } from "../atomicfga.js";
 import { MemoryStore } from "../stores/memory.js";
 import { RedbStore } from "../stores/redb.js";
 import { SqliteStore } from "../stores/sqlite.js";
+import { lifecycle } from "./lifecycle.js";
 import sqlite3InitModule from "../node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs";
 
 const WASM = "/rust/target/wasm32-unknown-unknown/wasm/";
 const STORE = "01HZZZSTORE000000000000000";
 const REDB_FILE = "atomicfga-test.redb";
+const LIFECYCLE_FILE = "atomicfga-lifecycle.redb";
 
 const direct = (types) => ({ directly_related_user_types: types });
 const user = { type: "user" };
@@ -168,6 +171,31 @@ async function backends(evaluatorBytes) {
   };
 }
 
+// The lifecycle suite on every adapter, each case on an empty database.
+async function lifecycles() {
+  const redbFile = () => RedbStore.open(WASM + "atomicfga_web_redb.wasm", { opfsFile: LIFECYCLE_FILE });
+  const sqlite = () => SqliteStore.open(sqlite3InitModule, { file: "/lifecycle.sqlite3" });
+  const removeRedb = async () => {
+    try {
+      await (await navigator.storage.getDirectory()).removeEntry(LIFECYCLE_FILE);
+    } catch {}
+  };
+  const adapters = {
+    "JS memory": [async () => new MemoryStore()],
+    "redb (memory)": [() => RedbStore.open(WASM + "atomicfga_web_redb.wasm")],
+    "redb (OPFS)": [async () => (await removeRedb(), redbFile()), redbFile],
+    "SQLite (OPFS)": [async () => (await SqliteStore.wipe(sqlite3InitModule), sqlite()), sqlite],
+  };
+  const out = [];
+  for (const [name, [open, reopen]] of Object.entries(adapters)) {
+    const cases = await lifecycle(open, reopen);
+    const failed = cases.filter(([, error]) => error);
+    out.push({ name: name + ": lifecycle", outcomes: cases.length, mismatches: failed.length, first: failed[0] ?? null });
+  }
+  await removeRedb();
+  return out;
+}
+
 function compare(name, got, want) {
   const diffs = [];
   for (let i = 0; i < Math.max(got.length, want.length); i++) if (got[i] !== want[i]) diffs.push({ i, got: got[i], want: want[i] });
@@ -212,6 +240,7 @@ async function run(phase) {
   result.outcomeKinds = want.reduce((m, o) => ((m[o.slice(0, 18)] = (m[o.slice(0, 18)] ?? 0) + 1), m), {});
 
   if (phase === "fresh") {
+    result.results.push(...(await lifecycles()));
     await wipe();
     for (const [name, open] of Object.entries(await backends())) {
       const adapter = await open();

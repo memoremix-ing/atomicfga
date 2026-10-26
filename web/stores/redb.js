@@ -7,6 +7,8 @@ const encoder = new TextEncoder();
 export class RedbStore {
   #e;
   #handle = null;
+  #closed = false;
+  #trapped = null; // the module's trap: its state is unknown afterwards
 
   /**
    * Opens the store. With `opfsFile` (a name in the origin's private file
@@ -52,11 +54,28 @@ export class RedbStore {
     return store;
   }
 
-  /** Closes the database and its file. */
+  /** Closes the database and its file, discarding an open transaction. */
   close() {
-    this.#e.close();
-    this.#handle?.close();
-    this.#handle = null;
+    if (this.#closed) return;
+    this.#closed = true;
+    try {
+      if (!this.#trapped) this.#e.close();
+    } finally {
+      this.#handle?.close();
+      this.#handle = null;
+    }
+  }
+
+  // Calls into the module, unless it can no longer be used.
+  #enter(f) {
+    if (this.#closed) throw new Error("the store is closed");
+    if (this.#trapped) throw new Error("the redb module trapped; reopen the store", { cause: this.#trapped });
+    try {
+      return f();
+    } catch (e) {
+      if (e instanceof WebAssembly.RuntimeError) this.#trapped = e;
+      throw e;
+    }
   }
 
   #check(n) {
@@ -70,6 +89,10 @@ export class RedbStore {
 
   // Calls `f` with (pointer, length) pairs for `args` in the module's memory.
   #call(args, f) {
+    return this.#enter(() => this.#pass(args, f));
+  }
+
+  #pass(args, f) {
     const e = this.#e;
     const bufs = args.map((x) => (typeof x === "string" ? encoder.encode(x) : x));
     const ptrs = bufs.map((b) => {
@@ -91,13 +114,13 @@ export class RedbStore {
   }
 
   begin(write) {
-    this.#check(write ? this.#e.begin_write() : this.#e.begin_read());
+    this.#enter(() => this.#check(write ? this.#e.begin_write() : this.#e.begin_read()));
   }
   commit() {
-    this.#check(this.#e.commit());
+    this.#enter(() => this.#check(this.#e.commit()));
   }
   abort() {
-    this.#check(this.#e.abort());
+    this.#enter(() => this.#check(this.#e.abort()));
   }
   tupleGet(store, object, relation, user) {
     return this.#bytes(this.#call([store, object, relation, user], this.#e.tuple_get));

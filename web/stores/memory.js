@@ -8,23 +8,41 @@ const key = (...parts) => parts.join("\u0000");
 export class MemoryStore {
   #tuples = new Map();
   #models = new Map();
-  #saved = null;
+  #tx = null; // null, or { write, saved: [tuples, models] } for an abort
+  #closed = false;
+
+  #need(write) {
+    if (this.#closed) throw new Error("the store is closed");
+    if (!this.#tx) throw new Error("no transaction is open");
+    if (write && !this.#tx.write) throw new Error("no write transaction is open");
+  }
 
   begin(write) {
-    if (this.#saved) throw new Error("a transaction is already open");
-    this.#saved = write ? [new Map(this.#tuples), new Map(this.#models)] : [this.#tuples, this.#models];
+    if (this.#closed) throw new Error("the store is closed");
+    if (this.#tx) throw new Error("a transaction is already open");
+    // Values are never mutated in place, so copying the maps is a snapshot.
+    this.#tx = { write: !!write, saved: write ? [new Map(this.#tuples), new Map(this.#models)] : null };
   }
   commit() {
-    this.#saved = null;
+    this.#need(false);
+    this.#tx = null;
   }
   abort() {
-    [this.#tuples, this.#models] = this.#saved;
-    this.#saved = null;
+    this.#need(false);
+    if (this.#tx.saved) [this.#tuples, this.#models] = this.#tx.saved;
+    this.#tx = null;
+  }
+  /** Discards an open transaction; everything fails afterwards. */
+  close() {
+    if (this.#tx) this.abort();
+    this.#closed = true;
   }
   tupleGet(store, object, relation, user) {
-    return this.#tuples.get(key(store, object, relation, user)) ?? null;
+    this.#need(false);
+    return this.#tuples.get(key(store, object, relation, user))?.slice() ?? null;
   }
   tupleScan(store, object, relation) {
+    this.#need(false);
     const prefix = key(store, object, relation, "");
     const rows = [];
     for (const [k, v] of this.#tuples) if (k.startsWith(prefix)) rows.push([k.slice(prefix.length), v]);
@@ -32,15 +50,19 @@ export class MemoryStore {
     return encodeTuples(rows);
   }
   tuplePut(store, object, relation, user, value) {
-    this.#tuples.set(key(store, object, relation, user), value);
+    this.#need(true);
+    this.#tuples.set(key(store, object, relation, user), value.slice());
   }
   tupleDelete(store, object, relation, user) {
+    this.#need(true);
     this.#tuples.delete(key(store, object, relation, user));
   }
   modelGet(store, id) {
-    return this.#models.get(key(store, id)) ?? null;
+    this.#need(false);
+    return this.#models.get(key(store, id))?.slice() ?? null;
   }
   modelLatest(store) {
+    this.#need(false);
     let latest = null;
     for (const [k, v] of this.#models) {
       const [s, id] = k.split("\u0000");
@@ -49,6 +71,7 @@ export class MemoryStore {
     return latest && encodeModel(latest[0], latest[1]);
   }
   modelPut(store, id, model) {
-    this.#models.set(key(store, id), model);
+    this.#need(true);
+    this.#models.set(key(store, id), model.slice());
   }
 }

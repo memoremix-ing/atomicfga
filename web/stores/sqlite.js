@@ -24,20 +24,29 @@ const empty = new Uint8Array(0);
 const pools = new Map();
 
 function pool(sqlite3InitModule, name) {
-  if (!pools.has(name)) pools.set(name, sqlite3InitModule().then((sqlite3) => sqlite3.installOpfsSAHPoolVfs({ name })));
+  if (!pools.has(name))
+    pools.set(
+      name,
+      sqlite3InitModule().then(async (sqlite3) => ({ sqlite3, util: await sqlite3.installOpfsSAHPoolVfs({ name }) })),
+    );
   return pools.get(name);
 }
 
 export class SqliteStore {
   #db;
-  #pool;
+  #capi;
   #stmts = {};
+  // null, "read", "write", or "ended": SQLite rolled the transaction back
+  // itself (after some errors it does), so statements would autocommit.
+  #tx = null;
+  #closed = false;
 
   /** Opens (creating) `file` in the SAH pool `poolName`. */
   static async open(sqlite3InitModule, { file = "/atomicfga.sqlite3", poolName = "atomicfga" } = {}) {
     const store = new SqliteStore();
-    store.#pool = await pool(sqlite3InitModule, poolName);
-    store.#db = new store.#pool.OpfsSAHPoolDb(file);
+    const { sqlite3, util } = await pool(sqlite3InitModule, poolName);
+    store.#capi = sqlite3.capi;
+    store.#db = new util.OpfsSAHPoolDb(file);
     store.#db.exec(SCHEMA);
     const prepare = (name, sql) => (store.#stmts[name] = store.#db.prepare(sql));
     prepare("get", "SELECT value FROM tuples WHERE store = ? AND object = ? AND relation = ? AND user = ?");
@@ -52,19 +61,38 @@ export class SqliteStore {
 
   /** Removes every database file of the pool. */
   static async wipe(sqlite3InitModule, { poolName = "atomicfga" } = {}) {
-    await (await pool(sqlite3InitModule, poolName)).wipeFiles();
+    await (await pool(sqlite3InitModule, poolName)).util.wipeFiles();
   }
 
+  /** Closes the database, discarding an open transaction. */
   close() {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#tx = null;
     Object.values(this.#stmts).forEach((s) => s.finalize());
-    this.#db.close();
+    this.#db.close(); // SQLite rolls back an open transaction
   }
 
-  #run(name, params, each) {
+  #inTransaction() {
+    return this.#capi.sqlite3_get_autocommit(this.#db.pointer) === 0;
+  }
+
+  #need(write) {
+    if (this.#closed) throw new Error("the store is closed");
+    if (this.#tx === "ended") throw new Error("SQLite ended the transaction after an error; abort it");
+    if (!this.#tx) throw new Error("no transaction is open");
+    if (write && this.#tx !== "write") throw new Error("no write transaction is open");
+  }
+
+  #run(name, params, each, write = false) {
+    this.#need(write);
     const s = this.#stmts[name];
     try {
       s.bind(params);
       while (s.step()) each?.(s);
+    } catch (e) {
+      if (!this.#inTransaction()) this.#tx = "ended";
+      throw e;
     } finally {
       s.reset(true);
     }
@@ -75,13 +103,31 @@ export class SqliteStore {
   }
 
   begin(write) {
+    if (this.#closed) throw new Error("the store is closed");
+    if (this.#tx) throw new Error("a transaction is already open");
     this.#db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
+    this.#tx = write ? "write" : "read";
   }
+  /** Commits. The transaction ends even if committing fails (nothing is committed then). */
   commit() {
-    this.#db.exec("COMMIT");
+    if (this.#end() === "ended") throw new Error("SQLite ended the transaction after an error; nothing was committed");
+    try {
+      this.#db.exec("COMMIT");
+    } catch (e) {
+      if (this.#inTransaction()) this.#db.exec("ROLLBACK");
+      throw e;
+    }
   }
   abort() {
-    this.#db.exec("ROLLBACK");
+    this.#end();
+    if (this.#inTransaction()) this.#db.exec("ROLLBACK");
+  }
+  #end() {
+    if (this.#closed) throw new Error("the store is closed");
+    if (!this.#tx) throw new Error("no transaction is open");
+    const tx = this.#tx;
+    this.#tx = null;
+    return tx;
   }
   tupleGet(store, object, relation, user) {
     let v = null;
@@ -94,10 +140,10 @@ export class SqliteStore {
     return encodeTuples(rows);
   }
   tuplePut(store, object, relation, user, value) {
-    this.#run("put", [store, object, relation, user, value]);
+    this.#run("put", [store, object, relation, user, value], null, true);
   }
   tupleDelete(store, object, relation, user) {
-    this.#run("delete", [store, object, relation, user]);
+    this.#run("delete", [store, object, relation, user], null, true);
   }
   modelGet(store, id) {
     let v = null;
@@ -110,6 +156,6 @@ export class SqliteStore {
     return v;
   }
   modelPut(store, id, model) {
-    this.#run("putModel", [store, id, model]);
+    this.#run("putModel", [store, id, model], null, true);
   }
 }

@@ -14,9 +14,18 @@
 //   modelLatest(store)                             -> Uint8Array | null
 //       (u32 LE ID length, ID, model)
 //   modelPut(store, id, model: Uint8Array)
+//   close()
 //
 // Adapters throw on failure. Everything is synchronous: in a browser, run
 // in a worker, where OPFS offers synchronous file access.
+//
+// One transaction is open at a time. begin fails while one is open (which
+// stays intact); commit and abort fail when none is; both end it, commit
+// even when it fails (committing nothing then). Reads need a transaction,
+// writes a write transaction. Values are copied in and out: an empty value
+// is present, null is absent. close discards an open transaction, may be
+// repeated, and everything else fails afterwards. web/test/lifecycle.js
+// checks all of this; every adapter must pass it.
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
