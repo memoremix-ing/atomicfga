@@ -120,7 +120,8 @@ func TestQueriesRunOnTheSessionBackend(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					q := fmt.Sprintf("SELECT %d", i)
+					// Slow, so that queries queue behind the first round trip.
+					q := fmt.Sprintf("SELECT slow %d", i)
 					if got, err := query(ctx, db, q); err != nil || got != q {
 						t.Errorf("%s: %q %v", q, got, err)
 					}
@@ -374,5 +375,79 @@ func TestDeferredQueriesRideTheNextRoundTrip(t *testing.T) {
 
 	if _, ok := NewSession().Call(f).Defer(ctx, "SELECT 1", nil); ok {
 		t.Fatal("a backend that cannot pipeline deferred a query")
+	}
+}
+
+// sqliteFake is a fake SQLite connection, whose transaction a statement
+// containing "end" ends (as a trigger's RAISE(ROLLBACK) does).
+type sqliteFake struct {
+	fake
+	outside bool
+}
+
+func (f *sqliteFake) Exec(ctx context.Context, query string, args []any) (int64, error) {
+	switch {
+	case query == "BEGIN" && !f.outside:
+		return 0, errors.New("cannot start a transaction within a transaction")
+	case query == "BEGIN":
+		f.outside = false
+	case query == "ROLLBACK":
+		f.outside = true
+	case strings.Contains(query, "end"):
+		f.outside = true
+		return 0, errors.New("constraint failed: trigger rolled back")
+	}
+	return f.fake.Exec(ctx, query, args)
+}
+
+func TestEndedTransactionsRefuseFurtherStatements(t *testing.T) {
+	f := &sqliteFake{}
+	db := OpenDB()
+	defer db.Close()
+	s := NewSession()
+	ctx := WithCall(context.Background(), s.Call(SQLiteLiveness(f)))
+
+	if _, err := db.ExecContext(ctx, "INSERT fail:23505"); err == nil || errors.Is(err, ErrTransactionAborted) {
+		t.Fatalf("a statement error in a live transaction: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT ok"); err != nil {
+		t.Fatalf("live transaction refused: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT end"); !errors.Is(err, ErrTransactionAborted) || s.Aborted() == nil {
+		t.Fatalf("an error that ended the transaction: %v", err)
+	}
+	if !f.outside {
+		t.Fatal("the liveness probe left a transaction open")
+	}
+	before := len(f.statements())
+	if _, err := db.ExecContext(ctx, "INSERT after"); !errors.Is(err, ErrTransactionAborted) || len(f.statements()) != before {
+		t.Fatalf("statement after the transaction ended: %v", err)
+	}
+}
+
+// releaseFails fails savepoint cleanup.
+type releaseFails struct{ fake }
+
+func (f *releaseFails) Exec(ctx context.Context, query string, args []any) (int64, error) {
+	if strings.HasPrefix(query, "RELEASE") {
+		return 0, errors.New("no such savepoint")
+	}
+	return f.fake.Exec(ctx, query, args)
+}
+
+func TestFailedSavepointCleanupPoisonsTheTransaction(t *testing.T) {
+	db := OpenDB()
+	defer db.Close()
+	s := NewSession()
+	ctx := WithCall(context.Background(), s.Call(&releaseFails{}))
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); !errors.Is(err, ErrTransactionAborted) {
+		t.Fatalf("failed RELEASE: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT after"); !errors.Is(err, ErrTransactionAborted) {
+		t.Fatalf("statement after failed cleanup: %v", err)
 	}
 }

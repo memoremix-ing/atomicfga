@@ -178,9 +178,14 @@ func pgxValue(v any) (driver.Value, error) {
 // if b does not wrap a pointer. Two backends with the same identity are the
 // same transaction.
 func Identity(b Backend) unsafe.Pointer {
+	for {
+		w, ok := b.(interface{ Unwrap() Backend })
+		if !ok {
+			break
+		}
+		b = w.Unwrap()
+	}
 	switch t := b.(type) {
-	case tursoBackend:
-		return Identity(t.Backend)
 	case SQLBackend:
 		return pointerOf(t.Tx)
 	case PgxBackend:

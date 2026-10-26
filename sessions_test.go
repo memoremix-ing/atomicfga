@@ -153,6 +153,62 @@ func TestBeginImmediateWhileLockedAborts(t *testing.T) {
 	}
 }
 
+// TestTransactionsEndedByTheDatabaseRefuseFurtherStatements requires a
+// session to stop once SQLite has rolled the transaction back by itself
+// (here, an application trigger's RAISE(ROLLBACK)): its connection would run
+// later statements in autocommit mode, committing each at once.
+func TestTransactionsEndedByTheDatabaseRefuseFurtherStatements(t *testing.T) {
+	for _, d := range []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso} {
+		for _, begin := range []string{"sql.Tx", "ImmediateTx"} {
+			t.Run(string(d)+"/"+begin, func(t *testing.T) {
+				db := testdb.Open(t, d)
+				ctx := context.Background()
+				if _, err := db.SQL.ExecContext(ctx, "CREATE TRIGGER app_rollback BEFORE INSERT ON store WHEN NEW.name = 'rollback' BEGIN SELECT RAISE(ROLLBACK, 'refused by the application'); END"); err != nil {
+					t.Skipf("trigger: %v", err)
+				}
+				e, err := atomicfga.New(d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer e.Close()
+				var tx atomicfga.Tx
+				if begin == "sql.Tx" {
+					stx, err := db.SQL.BeginTx(ctx, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer stx.Rollback()
+					tx = atomicfga.SQLTx(stx)
+				} else {
+					itx, err := atomicfga.BeginImmediate(ctx, db.SQL)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer itx.Rollback()
+					tx = atomicfga.SQLTx(itx)
+				}
+				s := e.Session(tx)
+				if _, err := s.CreateStore(ctx, &openfgav1.CreateStoreRequest{Name: "before"}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.CreateStore(ctx, &openfgav1.CreateStoreRequest{Name: "rollback"}); !errors.Is(err, atomicfga.ErrTransactionAborted) || status.Code(err) != codes.Aborted {
+					t.Fatalf("store the trigger refused: %v", err)
+				}
+				if _, err := s.CreateStore(ctx, &openfgav1.CreateStoreRequest{Name: "after"}); !errors.Is(err, atomicfga.ErrTransactionAborted) {
+					t.Fatalf("store after the transaction ended: %v", err)
+				}
+				var n int
+				if err := db.Reader.QueryRowContext(ctx, "SELECT count(*) FROM store").Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("%d stores visible outside the transaction before it committed", n)
+				}
+			})
+		}
+	}
+}
+
 func TestBeginImmediate(t *testing.T) {
 	for _, d := range []atomicfga.Dialect{atomicfga.SQLite, atomicfga.Turso} {
 		t.Run(string(d), func(t *testing.T) {

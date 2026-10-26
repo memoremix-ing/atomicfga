@@ -97,6 +97,15 @@ Errors:
   refuses all further statements. Roll back and retry the whole transaction.
   `BeginImmediate` and `ImmediateTx.Commit` return errors matching
   `ErrTransactionAborted` too when the database stayed busy.
+- SQLite can also end a transaction by itself on an error (an application
+  trigger's `RAISE(ROLLBACK)`, some I/O errors), after which its connection
+  would commit each later statement on its own. After any error on SQLite or
+  Turso the session asks the connection whether its transaction is still
+  open (with a `BEGIN`, which fails inside one and writes nothing), and if
+  not, refuses further statements with `ErrTransactionAborted`. The same
+  happens if releasing or rolling back one of the session's savepoints
+  fails. The session cannot see errors from statements the application runs
+  on the transaction itself: check those yourself.
 - Concurrent transactions inserting the same tuple fail as upstream does,
   with OpenFGA's own `Aborted` ("transactional write failed due to conflict").
   The failure is confined to the write's savepoint, but under `REPEATABLE

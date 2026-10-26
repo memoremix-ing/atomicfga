@@ -233,6 +233,9 @@ func (e *Engine) Session(tx Tx) *Session {
 	if e.dialect == Turso {
 		tx = bind.TursoErrors(tx)
 	}
+	if e.dialect == SQLite || e.dialect == Turso {
+		tx = bind.SQLiteLiveness(tx)
+	}
 	return &Session{engine: e, tx: tx, txState: e.sessions.state(tx)}
 }
 

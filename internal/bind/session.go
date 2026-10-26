@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -113,6 +114,33 @@ func (s *Session) observe(err error) error {
 	return err
 }
 
+// settle is observe for an error from b, which may also have ended the
+// transaction without saying so (see [SQLiteLiveness]). The caller must hold
+// the session.
+func (s *Session) settle(b Backend, err error) error {
+	err = s.observe(err)
+	if err == nil || errors.Is(err, ErrTransactionAborted) {
+		return err
+	}
+	l, ok := b.(interface{ ended(context.Context) bool })
+	if !ok {
+		return err
+	}
+	s.statements.Add(1)
+	s.roundTrips.Add(1)
+	if !l.ended(context.Background()) {
+		return err
+	}
+	return s.poison(fmt.Errorf("%w (the database ended the transaction)", err))
+}
+
+// poison records that the transaction can no longer be used, for a reason
+// no error code identifies.
+func (s *Session) poison(err error) error {
+	s.aborted.CompareAndSwap(nil, &abortError{err})
+	return s.aborted.Load()
+}
+
 // Dropped reports how many statements were abandoned before reaching the
 // backend because their call had been canceled or had returned.
 func (s *Session) Dropped() int64 { return s.dropped.Load() }
@@ -201,7 +229,7 @@ func (c *Call) query(ctx context.Context, held bool, query string, args []any) (
 		defer c.session.release()
 	}
 	res, err := c.backend.Query(context.WithoutCancel(ctx), query, args)
-	return res, c.session.observe(err)
+	return res, c.session.settle(c.backend, err)
 }
 
 func (c *Call) exec(ctx context.Context, held bool, query string, args []any) (int64, error) {
@@ -212,7 +240,7 @@ func (c *Call) exec(ctx context.Context, held bool, query string, args []any) (i
 		defer c.session.release()
 	}
 	n, err := c.backend.Exec(context.WithoutCancel(ctx), query, args)
-	return n, c.session.observe(err)
+	return n, c.session.settle(c.backend, err)
 }
 
 // begin acquires the session exclusively and opens a savepoint. The session
@@ -225,8 +253,9 @@ func (c *Call) begin(ctx context.Context) (string, error) {
 	s := c.session
 	name := "atomicfga_" + strconv.FormatUint(s.savepoints.Add(1), 10)
 	if _, err := c.backend.Exec(context.WithoutCancel(ctx), "SAVEPOINT "+name, nil); err != nil {
+		err = s.settle(c.backend, err)
 		s.release()
-		return "", s.observe(err)
+		return "", err
 	}
 	return name, nil
 }
@@ -240,7 +269,12 @@ func (s *Session) end(b Backend, statements ...string) error {
 		s.statements.Add(1)
 		s.roundTrips.Add(1)
 		if _, err := b.Exec(context.Background(), stmt, nil); err != nil {
-			return s.observe(err)
+			// Whatever the error, the savepoint's work may or may not have
+			// been undone, or the transaction ended.
+			if err := s.observe(err); errors.Is(err, ErrTransactionAborted) {
+				return err
+			}
+			return s.poison(fmt.Errorf("%w (%s failed)", err, stmt))
 		}
 	}
 	return nil

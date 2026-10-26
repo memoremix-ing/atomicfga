@@ -19,6 +19,8 @@ func TursoErrors(b Backend) Backend { return tursoBackend{b} }
 
 type tursoBackend struct{ Backend }
 
+func (t tursoBackend) Unwrap() Backend { return t.Backend }
+
 func (t tursoBackend) Query(ctx context.Context, query string, args []any) (*Result, error) {
 	res, err := t.Backend.Query(ctx, query, args)
 	return res, translateTurso(err)
