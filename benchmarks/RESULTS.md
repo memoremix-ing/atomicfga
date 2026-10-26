@@ -39,10 +39,30 @@ inverting transaction ownership, and it scales with fan-out, not data size:
    database. Exclusion issues 2 queries instead of upstream's 7–8 (0.27× on
    SQLite, 0.35× on Turso, 0.90× on PostgreSQL `database/sql`). Pipelined pgx
    batches are already sent, so they do not benefit.
-3. *Model resolution without queries.* After the first sighting of a
-   committed model, pinning a request to a visible model costs nothing.
-   Single-query checks inside a transaction are within 1–10% of upstream on
-   PostgreSQL (13–15% on SQLite, see below).
+3. *Model resolution in one indexed query.* A request is pinned to a model
+   visible in its transaction with one indexed `LIMIT 1` query; upstream's
+   PostgreSQL datastore reads every model row of the store to find the
+   latest.
+
+**The cost of model visibility (2026-10-25).** The tables here were measured
+when sessions skipped the visibility query for a model ID known to be
+committed. That shortcut was unsound (a transaction's snapshot may predate
+the commit, and a savepoint rollback can remove a model the transaction
+used), so every request with a model ID now runs the query. Every benchmark
+here passes one, so each pays one more statement and, on PostgreSQL, one
+more round trip that cannot overlap the check. Medians of three runs
+([raw](results/visibility-query.txt)), relative to upstream:
+
+| in tx | before | after |
+|---|---:|---:|
+| PostgreSQL pgx, direct check | 1.01× | 1.88× |
+| PostgreSQL pgx, 8-way union | 0.86× | 1.16× |
+| PostgreSQL pgx, 10-level recursion | 1.21× | 1.23× |
+| PostgreSQL `database/sql`, direct check | 1.06× | 1.90× |
+| SQLite, direct check | 1.10× | 1.24× |
+| Turso, direct check | 1.46× | 1.84× |
+
+The other tables have not been rerun since.
 
 **What remains slower, and when it matters:**
 
