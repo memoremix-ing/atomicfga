@@ -73,10 +73,7 @@ func outcomeOf(err error) string {
 // deletes of tuples written before or not, duplicates, and the ignore
 // options.
 func drawWrite(tc hegel.TestCase, rm rustModel, written []*openfgav1.TupleKey, store string, models []string) *openfgav1.WriteRequest {
-	req := &openfgav1.WriteRequest{StoreId: store}
-	if len(models) > 0 && hegel.Draw(tc, hegel.Booleans()) {
-		req.AuthorizationModelId = drawFrom(tc, models)
-	}
+	req := &openfgav1.WriteRequest{StoreId: store, AuthorizationModelId: drawFrom(tc, models)}
 	if n := hegel.Draw(tc, hegel.Integers(-1, 3)); n > 0 {
 		req.Writes = &openfgav1.WriteRequestWrites{}
 		for range n {
@@ -179,11 +176,7 @@ func TestHegelRustRedb(t *testing.T) {
 				}
 				continue
 			}
-			model := ""
-			if hegel.Draw(ht, hegel.Booleans()) {
-				model = models[i]
-			}
-			req := drawRustCheck(ht, drawn[i], store, model)
+			req := drawRustCheck(ht, drawn[i], store, models[i])
 			want, werr := oracle.Check(ctx, req)
 			got, gerr := r.Check(store, req)
 			wc, _ := checkOutcome(want, werr)

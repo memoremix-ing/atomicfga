@@ -55,9 +55,9 @@ type fixture struct {
 	model  string
 }
 
-func newFixture(t *testing.T, db *testdb.DB, pgx bool) *fixture {
+func newFixture(t *testing.T, db *testdb.DB, pgx bool, opts ...atomicfga.Option) *fixture {
 	t.Helper()
-	e, err := atomicfga.New(db.Dialect)
+	e, err := atomicfga.New(db.Dialect, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +78,21 @@ func newFixture(t *testing.T, db *testdb.DB, pgx bool) *fixture {
 	return f
 }
 
-// tx runs fn in a new transaction, committing if it returns nil.
+// tx runs fn in a new transaction, committing if it returns nil. It rolls
+// back otherwise, also when fn stops the test (an open transaction would
+// hold up the database's cleanup).
 func (f *fixture) tx(fn func(*atomicfga.Session, atomicfga.Tx) error) {
 	f.t.Helper()
 	tx, commit, rollback := f.db.Begin(f.t, f.pgx)
-	if err := fn(f.engine.Session(tx), tx); err != nil {
+	ended := false
+	defer func() {
+		if !ended {
+			_ = rollback()
+		}
+	}()
+	err := fn(f.engine.Session(tx), tx)
+	ended = true
+	if err != nil {
 		_ = rollback()
 		f.t.Fatal(err)
 	}
@@ -112,9 +122,10 @@ func tk(object, relation, user string) *openfgav1.TupleKey {
 	return &openfgav1.TupleKey{Object: object, Relation: relation, User: user}
 }
 
+// write writes tuples under the fixture's model.
 func (f *fixture) write(s *atomicfga.Session, writes ...*openfgav1.TupleKey) error {
 	_, err := s.Write(context.Background(), &openfgav1.WriteRequest{
-		StoreId: f.store, Writes: &openfgav1.WriteRequestWrites{TupleKeys: writes},
+		StoreId: f.store, AuthorizationModelId: f.model, Writes: &openfgav1.WriteRequestWrites{TupleKeys: writes},
 	})
 	return err
 }
@@ -161,7 +172,7 @@ func TestTransactionsCommitAndRollBackTogether(t *testing.T) {
 		if err := f.write(s, tk("doc:1", "owner", "user:anne")); err != nil {
 			t.Fatal(err)
 		}
-		if !f.mustCheck(s, "", "doc:1", "viewer", "user:anne") {
+		if !f.mustCheck(s, f.model, "doc:1", "viewer", "user:anne") {
 			t.Fatal("uncommitted grant is not visible to its own transaction")
 		}
 		if err := rollback(); err != nil {
@@ -169,7 +180,7 @@ func TestTransactionsCommitAndRollBackTogether(t *testing.T) {
 		}
 
 		f.tx(func(s *atomicfga.Session, tx atomicfga.Tx) error {
-			if f.mustCheck(s, "", "doc:1", "viewer", "user:anne") || f.appCount(tx) != 0 {
+			if f.mustCheck(s, f.model, "doc:1", "viewer", "user:anne") || f.appCount(tx) != 0 {
 				return errors.New("rolled back grant or row is visible")
 			}
 			f.appExec(tx, "INSERT INTO app_doc VALUES ('1')")
@@ -198,7 +209,7 @@ func TestFailedWriteRollsBackToItsSavepoint(t *testing.T) {
 			if status.Code(err) != codes.Code(openfgav1.ErrorCode_write_failed_due_to_invalid_input) {
 				return fmt.Errorf("duplicate write: got %v", err)
 			}
-			if f.mustCheck(s, "", "doc:2", "owner", "user:bob") {
+			if f.mustCheck(s, f.model, "doc:2", "owner", "user:bob") {
 				return errors.New("partially applied write is visible")
 			}
 			// The transaction is still usable, including for application SQL.
@@ -206,7 +217,7 @@ func TestFailedWriteRollsBackToItsSavepoint(t *testing.T) {
 			return f.write(s, tk("doc:3", "owner", "user:carl"))
 		})
 		f.tx(func(s *atomicfga.Session, tx atomicfga.Tx) error {
-			if !f.mustCheck(s, "", "doc:1", "owner", "user:anne") || !f.mustCheck(s, "", "doc:3", "owner", "user:carl") || f.appCount(tx) != 1 {
+			if !f.mustCheck(s, f.model, "doc:1", "owner", "user:anne") || !f.mustCheck(s, f.model, "doc:3", "owner", "user:carl") || f.appCount(tx) != 1 {
 				return errors.New("work around the failed write was not committed")
 			}
 			return nil
@@ -223,7 +234,7 @@ func TestApplicationSavepointsNestAroundOperations(t *testing.T) {
 				return err
 			}
 			f.appExec(tx, "ROLLBACK TO SAVEPOINT app")
-			if f.mustCheck(s, "", "doc:1", "owner", "user:anne") {
+			if f.mustCheck(s, f.model, "doc:1", "owner", "user:anne") {
 				return errors.New("write survived the application's savepoint rollback")
 			}
 			return f.write(s, tk("doc:1", "owner", "user:bob"))
@@ -243,7 +254,7 @@ func TestUncommittedModelsAndTuplesStayIsolated(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Populate every process-wide model cache with the uncommitted model.
-		if !f.mustCheck(writer, "", "doc:1", "editor", "user:anne") || !f.mustCheck(writer, v2, "doc:1", "editor", "user:anne") {
+		if !f.mustCheck(writer, v2, "doc:1", "editor", "user:anne") {
 			t.Fatal("writer cannot use its own model")
 		}
 
@@ -251,10 +262,10 @@ func TestUncommittedModelsAndTuplesStayIsolated(t *testing.T) {
 		if _, err := f.check(reader, v2, "doc:1", "editor", "user:anne"); status.Code(err) != codes.Code(openfgav1.ErrorCode_authorization_model_not_found) {
 			t.Fatalf("other transaction resolved an uncommitted model: %v", err)
 		}
-		if _, err := f.check(reader, "", "doc:1", "editor", "user:anne"); status.Code(err) != codes.Code(openfgav1.ErrorCode_validation_error) {
-			t.Fatalf("latest model for other transaction should be v1 (no editor relation): %v", err)
+		if latest := f.latestModel(reader); latest != f.model {
+			t.Fatalf("latest model for other transaction is %s, want v1, %s", latest, f.model)
 		}
-		if f.mustCheck(reader, "", "doc:1", "owner", "user:anne") {
+		if f.mustCheck(reader, f.model, "doc:1", "owner", "user:anne") {
 			t.Fatal("other transaction sees an uncommitted tuple")
 		}
 		_ = readerDone()
@@ -302,9 +313,8 @@ func (f *fixture) modelAbsent(s *atomicfga.Session, model string) error {
 	if _, err := s.ReadAuthorizationModel(context.Background(), &openfgav1.ReadAuthorizationModelRequest{StoreId: f.store, Id: model}); status.Code(err) != notFound {
 		return fmt.Errorf("model readable: %v", err)
 	}
-	// The fixture's model has no editor relation.
-	if _, err := f.check(s, "", "doc:1", "editor", "user:anne"); status.Code(err) != codes.Code(openfgav1.ErrorCode_validation_error) {
-		return fmt.Errorf("latest model is not the fixture's: %v", err)
+	if latest := f.latestModel(s); latest != f.model {
+		return fmt.Errorf("latest model is %s, not the fixture's", latest)
 	}
 	return nil
 }
@@ -317,7 +327,6 @@ func TestModelRolledBackToASavepointIsNotServed(t *testing.T) {
 			v2 := f.writeModel(s, docModelV2)
 			// Resolve it every way, filling the process-wide model caches.
 			f.mustCheck(s, v2, "doc:1", "editor", "user:anne")
-			f.mustCheck(s, "", "doc:1", "editor", "user:anne")
 			if _, err := s.ReadAuthorizationModel(context.Background(), &openfgav1.ReadAuthorizationModelRequest{StoreId: f.store, Id: v2}); err != nil {
 				return err
 			}
@@ -422,7 +431,7 @@ func TestConcurrentCallsShareOneTransaction(t *testing.T) {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						ok, err := f.check(s, "", fmt.Sprintf("doc:%d", i), "viewer", fmt.Sprintf("user:%d", j))
+						ok, err := f.check(s, f.model, fmt.Sprintf("doc:%d", i), "viewer", fmt.Sprintf("user:%d", j))
 						if err != nil || !ok {
 							errs <- fmt.Errorf("doc:%d user:%d: %v %v", i, j, ok, err)
 						}
@@ -445,10 +454,10 @@ func TestCanceledCallsLeaveTheTransactionUsable(t *testing.T) {
 			}
 			for i := range 50 {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(i)*20*time.Microsecond)
-				_, _ = s.ListObjects(ctx, &openfgav1.ListObjectsRequest{StoreId: f.store, Type: "doc", Relation: "viewer", User: "user:anne"})
+				_, _ = s.ListObjects(ctx, &openfgav1.ListObjectsRequest{StoreId: f.store, AuthorizationModelId: f.model, Type: "doc", Relation: "viewer", User: "user:anne"})
 				cancel()
 			}
-			if !f.mustCheck(s, "", "doc:1", "viewer", "user:anne") {
+			if !f.mustCheck(s, f.model, "doc:1", "viewer", "user:anne") {
 				return errors.New("grant lost")
 			}
 			return f.write(s, tk("doc:2", "owner", "user:anne"))

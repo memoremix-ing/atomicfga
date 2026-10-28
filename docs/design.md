@@ -143,26 +143,31 @@ The embedded server is shared by every transaction, so its caches are too.
   the type system cache and the weighted-graph cache), and concurrent lookups
   are coalesced with `singleflight`. A model written by an uncommitted
   transaction, or one that was rolled back, could therefore be served from
-  cache to a transaction that cannot see it. Coalescing could even run one
-  transaction's "latest model" lookup on another transaction's connection.
+  cache to a transaction that cannot see it.
 
   Models are immutable and their IDs are unique ULIDs. A cached model is
   correct for any transaction in which its ID is *visible*. Before delegating,
-  `Session` pins the request to a model ID that is visible in its transaction:
-  - Without a model ID, it queries the latest model ID in the transaction
-    (`ORDER BY authorization_model_id DESC LIMIT 1`) and sets it on a shallow
-    copy of the request. The server's "latest model" path, the only one that
-    reaches `FindLatestAuthorizationModel` through `singleflight`, is never
-    used.
-  - With a model ID, it confirms the ID exists in the transaction (`SELECT 1
-    … LIMIT 1`), on every request. No answer is remembered: a model another
-    transaction committed may postdate this one's snapshot, and the caller
-    may roll back to a savepoint, without the session seeing it, after the
-    session saw a model this transaction wrote.
+  `Session` requires the request to name its model, and confirms the ID
+  exists in the transaction (`SELECT 1 … LIMIT 1`), on every request. No
+  answer is remembered: a model another transaction committed may postdate
+  this one's snapshot, and the caller may roll back to a savepoint, without
+  the session seeing it, after the session saw a model this transaction
+  wrote. The server's "latest model" path (`FindLatestAuthorizationModel`
+  through `singleflight`) is never used.
 
-  Errors match upstream: `latest_authorization_model_not_found` and
+  A request naming no model fails with `ErrModelIDRequired`
+  (InvalidArgument), where upstream would use the store's latest model: the
+  greatest ID, an ordering of clock readings. A missing model is upstream's
   `authorization_model_not_found`. Request validation runs first, so invalid
   requests still get upstream's validation errors.
+
+- **Model IDs.** Upstream mints a model's ID from the clock. atomicfga reads
+  the store's greatest model ID in the write's transaction (on PostgreSQL
+  after taking a per-store `pg_advisory_xact_lock`), and the datastore
+  wrapper replaces a minted ID that is not greater with the greatest's
+  millisecond plus one; upstream answers with the ID it handed the
+  datastore. So the model written last always has the greatest ID, whatever
+  the clocks.
 
 ## Isolation of results from the original
 

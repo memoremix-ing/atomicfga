@@ -59,7 +59,7 @@ func TestSessionsOfOneTransactionRunConcurrently(t *testing.T) {
 						errs <- f.write(s, tk(fmt.Sprintf("doc:%d", i), "owner", "user:anne"))
 						return
 					}
-					_, err := f.check(s, "", "doc:0", "viewer", "user:anne")
+					_, err := f.check(s, f.model, "doc:0", "viewer", "user:anne")
 					errs <- err
 				}()
 			}
@@ -70,7 +70,7 @@ func TestSessionsOfOneTransactionRunConcurrently(t *testing.T) {
 					return err
 				}
 			}
-			if !f.mustCheck(f.engine.Session(tx), "", "doc:36", "viewer", "user:anne") {
+			if !f.mustCheck(f.engine.Session(tx), f.model, "doc:36", "viewer", "user:anne") {
 				return errors.New("a concurrent write was lost")
 			}
 			return nil
@@ -83,7 +83,7 @@ func TestTransactionStateIsReleased(t *testing.T) {
 		f := newFixture(t, db, pgx)
 		for range 20 {
 			f.tx(func(s *atomicfga.Session, _ atomicfga.Tx) error {
-				_, err := f.check(s, "", "doc:1", "viewer", "user:anne")
+				_, err := f.check(s, f.model, "doc:1", "viewer", "user:anne")
 				return err
 			})
 		}

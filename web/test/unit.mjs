@@ -62,21 +62,21 @@ const MODEL = {
 const viewer = (object, user) => ({ object, relation: "viewer", user });
 const SEEDED = [viewer("doc:1", "user:anne"), viewer("doc:1", "user:bob")];
 // Deletes both seeded tuples and writes three: five mutations.
-const REWRITE = { deletes: { tuple_keys: SEEDED }, writes: { tuple_keys: [viewer("doc:2", "user:anne"), viewer("doc:2", "user:bob"), viewer("doc:2", "user:carl")] } };
+const REWRITE = { authorization_model_id: MODEL_ID, deletes: { tuple_keys: SEEDED }, writes: { tuple_keys: [viewer("doc:2", "user:anne"), viewer("doc:2", "user:bob"), viewer("doc:2", "user:carl")] } };
 const UNIVERSE = ["doc:1", "doc:2"].flatMap((d) => ["user:anne", "user:bob", "user:carl"].map((u) => viewer(d, u)));
 
 async function seeded(open) {
   const a = await open();
   transaction(a, true, (tx) => {
     assert.deepEqual(evaluator.writeModel(tx, STORE, MODEL_ID, MODEL), { authorization_model_id: MODEL_ID });
-    assert.deepEqual(evaluator.write(tx, STORE, { writes: { tuple_keys: SEEDED } }), {});
+    assert.deepEqual(evaluator.write(tx, STORE, { authorization_model_id: MODEL_ID, writes: { tuple_keys: SEEDED } }), {});
   });
   return a;
 }
 
 // Every check of the universe, committed state.
 const state = (a) =>
-  transaction(a, false, (tx) => UNIVERSE.map((t) => `${t.object}@${t.user}: ${evaluator.check(tx, STORE, { tuple_key: t }).allowed}`));
+  transaction(a, false, (tx) => UNIVERSE.map((t) => `${t.object}@${t.user}: ${evaluator.check(tx, STORE, { authorization_model_id: MODEL_ID, tuple_key: t }).allowed}`));
 
 /** `adapter`, except that its `nth` call of a method in `methods` throws. */
 function failing(adapter, methods, nth) {
@@ -123,7 +123,7 @@ for (const [name, open] of Object.entries(adapters)) {
         transaction(f, true, (tx) => {
           assert.throws(() => evaluator.write(tx, STORE, REWRITE), TransactionAbortedError);
           // Later calls fail too, even ones the store would answer.
-          assert.throws(() => evaluator.check(tx, STORE, { tuple_key: SEEDED[0] }), TransactionAbortedError);
+          assert.throws(() => evaluator.check(tx, STORE, { authorization_model_id: MODEL_ID, tuple_key: SEEDED[0] }), TransactionAbortedError);
           return "the callback returned";
         }),
       TransactionAbortedError,
@@ -136,8 +136,8 @@ for (const [name, open] of Object.entries(adapters)) {
     const a = await open();
     assert.throws(() => transaction(failing(a, ["modelPut"], 1), true, (tx) => evaluator.writeModel(tx, STORE, MODEL_ID, MODEL)), TransactionAbortedError);
     assert.deepEqual(
-      transaction(a, false, (tx) => evaluator.check(tx, STORE, { tuple_key: SEEDED[0] })).error?.code,
-      "latest_authorization_model_not_found",
+      transaction(a, false, (tx) => evaluator.check(tx, STORE, { authorization_model_id: MODEL_ID, tuple_key: SEEDED[0] })).error?.code,
+      "authorization_model_not_found",
     );
     a.close();
   });
@@ -145,7 +145,7 @@ for (const [name, open] of Object.entries(adapters)) {
 
 test("evaluator calls take only a live transaction of transaction()", async () => {
   const a = await seeded(adapters["JS memory"]);
-  const check = (tx) => evaluator.check(tx, STORE, { tuple_key: SEEDED[0] });
+  const check = (tx) => evaluator.check(tx, STORE, { authorization_model_id: MODEL_ID, tuple_key: SEEDED[0] });
   a.begin(false);
   assert.throws(() => check(a), TypeError, "a raw adapter");
   assert.throws(() => check({}), TypeError, "a lookalike");
@@ -155,5 +155,27 @@ test("evaluator calls take only a live transaction of transaction()", async () =
   assert.throws(() => check(kept), /ended/, "a transaction that ended");
   assert.throws(() => transaction(a, false, (tx) => evaluator.write(tx, STORE, REWRITE)), TypeError, "a write in a read transaction");
   assert.deepEqual(state(a).filter((s) => s.endsWith("true")).length, 2);
+  a.close();
+});
+
+test("model IDs must increase per store", async () => {
+  const a = await seeded(adapters["JS memory"]);
+  transaction(a, true, (tx) => {
+    const r = evaluator.writeModel(tx, STORE, "01HZZZ00000000000000000000", MODEL);
+    assert.equal(r.error?.code, "invalid_argument", JSON.stringify(r));
+    assert.deepEqual(evaluator.writeModel(tx, STORE, MODEL_ID, MODEL), { authorization_model_id: MODEL_ID }, "rewriting the latest is a no-op");
+    assert.deepEqual(evaluator.writeModel(tx, STORE, "01HZZZ00000000000000000002", MODEL), { authorization_model_id: "01HZZZ00000000000000000002" });
+  });
+  a.close();
+});
+
+test("checks and writes must name their model", async () => {
+  const a = await seeded(adapters["JS memory"]);
+  transaction(a, true, (tx) => {
+    for (const r of [evaluator.check(tx, STORE, { tuple_key: SEEDED[0] }), evaluator.write(tx, STORE, { writes: { tuple_keys: [viewer("doc:3", "user:anne")] } })]) {
+      assert.equal(r.error?.code, "invalid_argument", JSON.stringify(r));
+      assert.match(r.error.message, /required/);
+    }
+  });
   a.close();
 });

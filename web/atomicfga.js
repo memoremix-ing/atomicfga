@@ -210,17 +210,23 @@ export class Evaluator {
     this.#exports.set_inline_expressions(on ? 1 : 0);
   }
 
-  /** WriteAuthorizationModel under the given ID (a ULID), in write transaction `tx`. */
+  /**
+   * WriteAuthorizationModel under the given ID (a ULID), in write transaction
+   * `tx`. A new model's ID must be greater than the store's latest.
+   */
   writeModel(tx, store, id, request) {
     return this.#with(tx, true, () => this.#invoke([store, id, Evaluator.#json(request)], (...a) => this.#exports.write_model(...a)));
   }
 
-  /** Write, in write transaction `tx`. */
+  /** Write, in write transaction `tx`. The request names its model (`authorization_model_id`). */
   write(tx, store, request) {
     return this.#with(tx, true, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.write(...a)));
   }
 
-  /** Check, in transaction `tx`. `canonical` selects the canonical semantics. */
+  /**
+   * Check, in transaction `tx`. The request names its model
+   * (`authorization_model_id`). `canonical` selects the canonical semantics.
+   */
   check(tx, store, request, { canonical = false } = {}) {
     return this.#with(tx, false, () => this.#invoke([store, Evaluator.#json(request)], (...a) => this.#exports.check(...a, canonical ? 1 : 0)));
   }

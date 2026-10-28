@@ -451,11 +451,8 @@ func TestHegelRustCheck(t *testing.T) {
 					})
 				}
 				for range hegel.Draw(ht, hegel.Integers(1, 8)) {
-					i := hegel.Draw(ht, hegel.Integers(0, len(models)))
-					model, rm := "", drawn[len(drawn)-1] // "" is the latest
-					if i < len(models) {
-						model, rm = models[i], drawn[i]
-					}
+					i := hegel.Draw(ht, hegel.Integers(0, len(models)-1))
+					model, rm := models[i], drawn[i]
 					req := drawRustCheck(ht, rm, st.GetId(), model)
 					if cycle && hegel.Draw(ht, hegel.Booleans()) {
 						// Userset users are always resolved by the default
@@ -536,14 +533,16 @@ type doc
 				t.Fatal(err)
 			}
 			m := parser.MustTransformDSLToProto(model)
-			if _, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: "1.1", TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+			mr, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: "1.1", TypeDefinitions: m.GetTypeDefinitions()})
+			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: tuples}}); err != nil {
+			modelID := mr.GetAuthorizationModelId()
+			if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), AuthorizationModelId: modelID, Writes: &openfgav1.WriteRequestWrites{TupleKeys: tuples}}); err != nil {
 				t.Fatal(err)
 			}
 			for _, c := range checks {
-				resp, err, _ := gate.compare(ctx, s, &openfgav1.CheckRequest{StoreId: st.GetId(), TupleKey: c})
+				resp, err, _ := gate.compare(ctx, s, &openfgav1.CheckRequest{StoreId: st.GetId(), AuthorizationModelId: modelID, TupleKey: c})
 				code, _ := checkOutcome(resp, err)
 				t.Logf("%s#%s@%s: openfga %s", c.GetObject(), c.GetRelation(), c.GetUser(), code)
 			}
@@ -586,7 +585,7 @@ type doc
 			checks = append(checks, &openfgav1.CheckRequestTupleKey{Object: fmt.Sprintf("folder:c%d", i), Relation: "viewer", User: user})
 		}
 	}
-	setup := func(t *testing.T, v variant, opts ...server.OpenFGAServiceV1Option) (*atomicfga.Session, string) {
+	setup := func(t *testing.T, v variant, opts ...server.OpenFGAServiceV1Option) (*atomicfga.Session, string, string) {
 		db := v.open(t)
 		engine, err := atomicfga.New(db.Dialect, atomicfga.WithServerOptions(opts...))
 		if err != nil {
@@ -605,24 +604,25 @@ type doc
 			t.Fatal(err)
 		}
 		m := parser.MustTransformDSLToProto(model)
-		if _, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: "1.1", TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+		mr, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: "1.1", TypeDefinitions: m.GetTypeDefinitions()})
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: tuples}}); err != nil {
+		if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), AuthorizationModelId: mr.GetAuthorizationModelId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: tuples}}); err != nil {
 			t.Fatal(err)
 		}
-		return s, st.GetId()
+		return s, st.GetId(), mr.GetAuthorizationModelId()
 	}
 	ctx := context.Background()
 	for _, v := range variants() {
 		t.Run(v.name, func(t *testing.T) {
 			for _, limit := range []uint32{1, 2, 3, 4, 5, 6, 8, 10, 25} {
 				t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
-					s, store := setup(t, v, server.WithResolveNodeLimit(limit))
+					s, store, modelID := setup(t, v, server.WithResolveNodeLimit(limit))
 					gate := newRustGate(t, fmt.Sprintf("%s, limit %d", v.name, limit))
 					outcomes := map[string]bool{}
 					for _, c := range checks {
-						resp, err, _ := gate.compare(ctx, s, &openfgav1.CheckRequest{StoreId: store, TupleKey: c})
+						resp, err, _ := gate.compare(ctx, s, &openfgav1.CheckRequest{StoreId: store, AuthorizationModelId: modelID, TupleKey: c})
 						code, _ := checkOutcome(resp, err)
 						outcomes[code] = true
 					}
@@ -638,8 +638,8 @@ type doc
 				"weighted graph check": {server.WithExperimentals(config.ExperimentalWeightedGraphCheck)},
 			} {
 				t.Run(name, func(t *testing.T) {
-					s, store := setup(t, v, opts...)
-					_, err := s.RustCheckStrict(ctx, &openfgav1.CheckRequest{StoreId: store, TupleKey: checks[0]})
+					s, store, modelID := setup(t, v, opts...)
+					_, err := s.RustCheckStrict(ctx, &openfgav1.CheckRequest{StoreId: store, AuthorizationModelId: modelID, TupleKey: checks[0]})
 					if !errors.Is(err, atomicfga.ErrRustRefused) {
 						t.Errorf("RustCheckStrict: %v, want a refusal", err)
 					}

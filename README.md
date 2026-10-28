@@ -158,6 +158,45 @@ Schema: `atomicfga.Migrate(ctx, db, dialect)` applies OpenFGA's own embedded
 migrations through goose, recording them in `goose_db_version` exactly as
 `openfga migrate` does. Turso uses the SQLite migrations.
 
+## Choosing the model
+
+In OpenFGA, a request that names no `authorization_model_id` uses the
+store's latest model, the one with the greatest ID, and IDs (ULIDs) are
+minted from the clock: which rules apply depends on the clocks of the
+servers that wrote the models. atomicfga takes the clock out of it:
+
+- **Every request names its model.** Requests that use a model (Check,
+  BatchCheck, Expand, ListObjects, StreamedListObjects, ListUsers, Write,
+  RustCheck) and name none fail with `ErrModelIDRequired`
+  (InvalidArgument). Keep the model ID to use in your own table, and update
+  it in the transaction that writes the model. Rolling a model back is then
+  an update, and moving a store to another server carries the choice with
+  the rows.
+
+  ```go
+  // Deploy: the model and the switch to it commit together.
+  m, err := fga.WriteAuthorizationModel(ctx, req)
+  _, err = tx.Exec(ctx, `INSERT INTO authz_model (store_id, model_id) VALUES ($1, $2)
+      ON CONFLICT (store_id) DO UPDATE SET model_id = excluded.model_id`, storeID, m.GetAuthorizationModelId())
+
+  // Every request: read it in the same transaction.
+  var modelID string
+  err = tx.QueryRow(ctx, `SELECT model_id FROM authz_model WHERE store_id = $1`, storeID).Scan(&modelID)
+  resp, err := fga.Check(ctx, &openfgav1.CheckRequest{StoreId: storeID, AuthorizationModelId: modelID, TupleKey: key})
+  ```
+
+- **Model IDs always increase.** A new model's ID is greater
+  than every model ID of the store its transaction sees: when the clock is
+  behind the one that minted the latest model, the new ID is the latest's
+  millisecond plus one, with fresh entropy, and the response names it. On
+  PostgreSQL, model writes to one store take a transaction-scoped advisory
+  lock (`pg_advisory_xact_lock`), so concurrent model writes rank in commit
+  order at READ COMMITTED (SERIALIZABLE aborts one instead; avoid writing
+  models at REPEATABLE READ). SQLite runs one writer at a time.
+
+`docs/fga-primer.html` explains the background, from what a Check is to
+where the clock enters.
+
 ## Differences from an OpenFGA server
 
 - **Caches that would share data between transactions are disabled:** the
@@ -166,6 +205,9 @@ migrations through goose, recording them in `goose_db_version` exactly as
   The authorization model and type system caches stay on. They are safe
   because models are immutable and every request is first pinned to a model
   visible in its transaction.
+- **Requests must name their model** (`ErrModelIDRequired`), and **model
+  IDs always increase per store** (see Choosing the model). OpenFGA uses
+  the latest model, ranked by the clock that minted its ID.
 - **Consistency preferences have no effect.** Every read sees the
   transaction's view. `HIGHER_CONSISTENCY` is accepted and ignored.
 - **Timestamps and the changelog.** On PostgreSQL, `NOW()` is the
@@ -211,9 +253,8 @@ against 48 µs on SQLite.)
 - Queued reads of branches OpenFGA has already abandoned are dropped, so
   exclusions and intersections often issue fewer queries than upstream.
 - Model resolution costs one indexed `LIMIT 1` query per request, in the
-  transaction (upstream's PostgreSQL datastore reads every model row of the
-  store to find the latest). The table above predates that query for
-  requests with a model ID. With pgx, read-only calls send it together with
+  transaction, confirming the named model is visible. The table above
+  predates that query. With pgx, read-only calls send it together with
   their first reads (a single-query check is 1.14× upstream); with
   `database/sql` it adds a round trip (1.96×). See
   [results](benchmarks/RESULTS.md).

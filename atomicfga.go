@@ -22,6 +22,8 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/openfga/openfga/pkg/server"
 	"github.com/openfga/openfga/pkg/storage"
@@ -73,6 +75,16 @@ func WithServerOptions(opts ...server.OpenFGAServiceV1Option) Option {
 func WithDatastoreOptions(opts ...sqlcommon.DatastoreOption) Option {
 	return func(o *options) { o.datastore = append(o.datastore, opts...) }
 }
+
+// ErrModelIDRequired is returned (with gRPC code InvalidArgument) for a
+// request that uses an authorization model but names none: Check,
+// BatchCheck, Expand, ListObjects, StreamedListObjects, ListUsers, Write,
+// RustCheck and RustCheckStrict. OpenFGA would use the store's latest model,
+// the one with the greatest ID, and it mints IDs from the clock; atomicfga
+// requires the application to choose (say, a model ID it keeps in its own
+// table and updates in the transaction that writes the model), so which
+// rules a request follows never depends on an ordering of IDs.
+var ErrModelIDRequired = status.Error(codes.InvalidArgument, "atomicfga: authorization_model_id is required: name the model the request uses")
 
 // Engine is a long-lived embedded OpenFGA server that executes every
 // operation inside a caller-supplied transaction. It holds no database

@@ -56,6 +56,7 @@ type guarded struct {
 	engine   *atomicfga.Engine
 	pgx      bool
 	store    string
+	model    string
 	outside  bool // check outside the transaction (the unsafe baseline)
 	retries  atomic.Int64
 	conflict func(error) bool
@@ -105,7 +106,7 @@ func (g *guarded) tx(tc hegel.TestCase, op, doc, user string, fn func(*atomicfga
 }
 
 func (g *guarded) write(s *atomicfga.Session, write bool, doc, user string) error {
-	req := &openfgav1.WriteRequest{StoreId: g.store}
+	req := &openfgav1.WriteRequest{StoreId: g.store, AuthorizationModelId: g.model}
 	t := &openfgav1.TupleKey{Object: doc, Relation: "editor", User: user}
 	if write {
 		req.Writes = &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{t}, OnDuplicate: "ignore"}
@@ -133,7 +134,7 @@ func (g *guarded) RuleRevoke(tc hegel.TestCase) {
 func (g *guarded) RuleJoin(tc hegel.TestCase) {
 	user := drawFrom(tc, guardUsers)
 	g.tx(tc, "join", guardTeam, user, func(s *atomicfga.Session, _ atomicfga.Tx) (bool, error) {
-		_, err := s.Write(g.ctx, &openfgav1.WriteRequest{StoreId: g.store, Writes: &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{{Object: guardTeam, Relation: "member", User: user}}, OnDuplicate: "ignore"}})
+		_, err := s.Write(g.ctx, &openfgav1.WriteRequest{StoreId: g.store, AuthorizationModelId: g.model, Writes: &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{{Object: guardTeam, Relation: "member", User: user}}, OnDuplicate: "ignore"}})
 		return true, err
 	})
 }
@@ -141,14 +142,14 @@ func (g *guarded) RuleJoin(tc hegel.TestCase) {
 func (g *guarded) RuleLeave(tc hegel.TestCase) {
 	user := drawFrom(tc, guardUsers)
 	g.tx(tc, "leave", guardTeam, user, func(s *atomicfga.Session, _ atomicfga.Tx) (bool, error) {
-		_, err := s.Write(g.ctx, &openfgav1.WriteRequest{StoreId: g.store, Deletes: &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{{Object: guardTeam, Relation: "member", User: user}}, OnMissing: "ignore"}})
+		_, err := s.Write(g.ctx, &openfgav1.WriteRequest{StoreId: g.store, AuthorizationModelId: g.model, Deletes: &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{{Object: guardTeam, Relation: "member", User: user}}, OnMissing: "ignore"}})
 		return true, err
 	})
 }
 
 func (g *guarded) RuleEdit(tc hegel.TestCase) {
 	doc, user := drawFrom(tc, guardDocs), drawFrom(tc, guardUsers)
-	req := &openfgav1.CheckRequest{StoreId: g.store, TupleKey: &openfgav1.CheckRequestTupleKey{Object: doc, Relation: "editor", User: user}}
+	req := &openfgav1.CheckRequest{StoreId: g.store, AuthorizationModelId: g.model, TupleKey: &openfgav1.CheckRequestTupleKey{Object: doc, Relation: "editor", User: user}}
 	if g.outside {
 		// The baseline: decide first, in a separate committed view (as a
 		// call to a separately deployed OpenFGA would), then act.
@@ -265,9 +266,11 @@ func runGuarded(t *testing.T, outside bool) {
 				}
 				g.store = st.GetId()
 				m := parser.MustTransformDSLToProto(guardDSL)
-				if _, err := s.WriteAuthorizationModel(g.ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: g.store, SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+				mr, err := s.WriteAuthorizationModel(g.ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: g.store, SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions()})
+				if err != nil {
 					ht.Fatalf("write model: %v", err)
 				}
+				g.model = mr.GetAuthorizationModelId()
 				if err := commit(); err != nil {
 					ht.Fatalf("commit: %v", err)
 				}
@@ -339,10 +342,12 @@ func TestCheckThenActNeedsSerializable(t *testing.T) {
 					t.Fatal(err)
 				}
 				m := parser.MustTransformDSLToProto(guardDSL)
-				if _, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions()}); err != nil {
+				mr, err := s.WriteAuthorizationModel(ctx, &openfgav1.WriteAuthorizationModelRequest{StoreId: st.GetId(), SchemaVersion: m.GetSchemaVersion(), TypeDefinitions: m.GetTypeDefinitions()})
+				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{anne}}}); err != nil {
+				model := mr.GetAuthorizationModelId()
+				if _, err := s.Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), AuthorizationModelId: model, Writes: &openfgav1.WriteRequestWrites{TupleKeys: []*openfgav1.TupleKey{anne}}}); err != nil {
 					t.Fatal(err)
 				}
 				if err := commit(); err != nil {
@@ -351,7 +356,7 @@ func TestCheckThenActNeedsSerializable(t *testing.T) {
 
 				edit, commitEdit, rollbackEdit := db.Begin(t, v.pgx)
 				defer rollbackEdit()
-				r, err := engine.Session(edit).Check(ctx, &openfgav1.CheckRequest{StoreId: st.GetId(), TupleKey: &openfgav1.CheckRequestTupleKey{Object: anne.Object, Relation: anne.Relation, User: anne.User}})
+				r, err := engine.Session(edit).Check(ctx, &openfgav1.CheckRequest{StoreId: st.GetId(), AuthorizationModelId: model, TupleKey: &openfgav1.CheckRequestTupleKey{Object: anne.Object, Relation: anne.Relation, User: anne.User}})
 				if err != nil || !r.GetAllowed() {
 					t.Fatalf("edit's check: allowed=%v, error=%v", r.GetAllowed(), err)
 				}
@@ -362,7 +367,7 @@ func TestCheckThenActNeedsSerializable(t *testing.T) {
 				if err != nil || fmt.Sprint(res.Rows[0][0]) != "0" {
 					t.Fatalf("revocation's read: %v, error=%v", res, err)
 				}
-				if _, err := engine.Session(revoke).Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), Deletes: &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{{Object: anne.Object, Relation: anne.Relation, User: anne.User}}}}); err != nil {
+				if _, err := engine.Session(revoke).Write(ctx, &openfgav1.WriteRequest{StoreId: st.GetId(), AuthorizationModelId: model, Deletes: &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{{Object: anne.Object, Relation: anne.Relation, User: anne.User}}}}); err != nil {
 					t.Fatal(err)
 				}
 				if err := commitRevoke(); err != nil {

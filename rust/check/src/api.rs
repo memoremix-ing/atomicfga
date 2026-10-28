@@ -225,7 +225,11 @@ impl Fga {
     /// the latest model is the greatest ID). Returns `{"authorization_model_id"}`
     /// or `{"error": {code, message}}` (or `{"refused"}` when the model
     /// compiler cannot decide). Models are immutable: writing an ID again
-    /// succeeds only with the same model.
+    /// succeeds only with the same model. A new model's ID must be greater
+    /// than every model ID of the store in `tx`, so the model written last
+    /// is the latest: an ID minted from a clock behind the one that minted
+    /// the latest model's is rejected (`invalid_argument`), not ranked below
+    /// it. Mint IDs from at least the latest's millisecond plus one.
     pub fn write_model(&self, tx: &impl StoreMut, store: &str, id: &str, request: &[u8]) -> Value {
         if !ulid_ok(id) {
             return api_error(
@@ -252,7 +256,19 @@ impl Fga {
         }
         let bytes = serde_json::to_vec(&model).unwrap_or_default();
         let stored = match tx.model(store, id) {
-            Ok(None) => tx.put_model(store, id, &bytes),
+            Ok(None) => match tx.latest_model(store) {
+                Ok(Some((latest, _))) if latest.as_str() >= id => {
+                    return api_error(
+                        "invalid_argument",
+                        format!(
+                            "authorization model ID '{id}' is not greater than the store's latest, '{latest}': \
+                             model IDs must increase (was this one minted from a clock that is behind?)"
+                        ),
+                    )
+                }
+                Ok(_) => tx.put_model(store, id, &bytes),
+                Err(e) => Err(e),
+            },
             Ok(Some(existing)) if existing == bytes => Ok(()),
             Ok(Some(_)) => {
                 return api_error(
@@ -270,34 +286,33 @@ impl Fga {
         }
     }
 
-    /// Resolves the request's model (or the latest) as `tx` stores it: the
-    /// compiled model, or the reason this port cannot evaluate it.
+    /// Resolves the model the request names as `tx` stores it: the compiled
+    /// model, or the reason this port cannot evaluate it.
     fn resolve_model(
         &self,
         tx: &impl Store,
         store: &str,
         id: &str,
     ) -> Result<Result<Arc<Model>, String>, Value> {
-        let found = if id.is_empty() {
-            tx.latest_model(store)
-        } else {
-            tx.model(store, id).map(|m| m.map(|m| (id.to_string(), m)))
+        // OpenFGA would use the store's latest model, the greatest ID: only
+        // as meaningful as the clocks that minted the IDs. The caller names
+        // the model instead, as Go's atomicfga requires (ErrModelIDRequired).
+        if id.is_empty() {
+            return Err(api_error(
+                "invalid_argument",
+                "authorization_model_id is required: name the model the request uses",
+            ));
         }
-        .map_err(|e| api_error("internal_error", e))?;
-        let Some((id, model)) = found else {
-            return Err(if id.is_empty() {
-                api_error(
-                    "latest_authorization_model_not_found",
-                    format!("No authorization models found for store '{store}'"),
-                )
-            } else {
+        let model = tx
+            .model(store, id)
+            .map_err(|e| api_error("internal_error", e))?
+            .ok_or_else(|| {
                 api_error(
                     "authorization_model_not_found",
                     format!("Authorization Model '{id}' not found"),
                 )
-            });
-        };
-        let key = (store.to_string(), id);
+            })?;
+        let key = (store.to_string(), id.to_string());
         if let Some(c) = self.models.lock().unwrap().get(&key) {
             if c.source == model {
                 return Ok(c.model.clone());
@@ -608,17 +623,16 @@ mod tests {
         let s = MemoryStore::default();
         let fga = Fga::default();
         assert_eq!(
-            fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", MODEL.as_bytes())
-                ["authorization_model_id"],
-            "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+            fga.write_model(&s, "s", ID, MODEL.as_bytes())["authorization_model_id"],
+            ID
         );
-        let w = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}]}});
+        let w = json!({"authorization_model_id": ID, "writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}]}});
         assert_eq!(
             fga.write(&s, "s", &serde_json::to_vec(&w).unwrap()),
             json!({})
         );
         let check = |user: &str| {
-            let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
+            let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
             fga.check(
                 &s,
                 "s",
@@ -645,13 +659,12 @@ mod tests {
              "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"group2","relation":"member"}]}}}},
             {"type":"doc","relations":{"viewer":{"this":{}}},
              "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"group","relation":"member"}]}}}}]}"#;
-        let tuples = json!({"writes": {"tuple_keys": [
+        let tuples = json!({"authorization_model_id": ID, "writes": {"tuple_keys": [
             {"object": "doc:1", "relation": "viewer", "user": "group:g#member"},
             {"object": "group:g", "relation": "member", "user": "group2:g#member"},
             {"object": "group2:g", "relation": "member", "user": "user:anne"},
         ]}});
-        let req =
-            json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+        let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
         let check = |limit: u32| {
             let s = MemoryStore::default();
             let fga = Fga {
@@ -660,7 +673,7 @@ mod tests {
                 },
                 ..Fga::default()
             };
-            fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+            fga.write_model(&s, "s", ID, model.as_bytes());
             assert_eq!(
                 fga.write(&s, "s", &serde_json::to_vec(&tuples).unwrap()),
                 json!({})
@@ -699,7 +712,7 @@ mod tests {
             "metadata":{"relations":{"parent":{"directly_related_user_types":[{"type":"folder"}]},
                 "viewer":{"directly_related_user_types":[{"type":"user"}]}}}}]}"#;
         let (fga, s) = (Fga::default(), MemoryStore::default());
-        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        fga.write_model(&s, "s", ID, model.as_bytes());
         for i in 0..n {
             s.put_tuple(
                 "s",
@@ -719,7 +732,7 @@ mod tests {
     fn canonical_checks_have_no_depth_limit() {
         let req = |user: &str| {
             serde_json::to_vec(
-                &json!({"tuple_key": {"object": "folder:0", "relation": "viewer", "user": user}}),
+                &json!({"authorization_model_id": ID, "tuple_key": {"object": "folder:0", "relation": "viewer", "user": user}}),
             )
             .unwrap()
         };
@@ -752,7 +765,7 @@ mod tests {
             "relations":{"member":{"this":{}}},
             "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]}}}}]}"#;
         let (fga, s) = (Fga::default(), MemoryStore::default());
-        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        fga.write_model(&s, "s", ID, model.as_bytes());
         for a in 0..10 {
             for b in 0..10 {
                 if a != b {
@@ -770,8 +783,7 @@ mod tests {
         s.put_tuple("s", "group:9", "member", "user:anne", b"")
             .unwrap();
         let check = |user: &str| {
-            let req =
-                json!({"tuple_key": {"object": "group:0", "relation": "member", "user": user}});
+            let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "group:0", "relation": "member", "user": user}});
             answer(fga.check(
                 &s,
                 "s",
@@ -796,15 +808,11 @@ mod tests {
             "metadata":{"relations":{"member":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]},
                 "banned":{"directly_related_user_types":[{"type":"user"},{"type":"group","relation":"member"}]}}}}]}"#;
         let (fga, s) = (Fga::default(), MemoryStore::default());
-        let r = fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
-        assert_eq!(
-            r["authorization_model_id"], "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "OpenFGA accepts it: {r}"
-        );
+        let r = fga.write_model(&s, "s", ID, model.as_bytes());
+        assert_eq!(r["authorization_model_id"], ID, "OpenFGA accepts it: {r}");
         s.put_tuple("s", "group:g", "member", "user:anne", b"")
             .unwrap();
-        let req =
-            json!({"tuple_key": {"object": "group:g", "relation": "member", "user": "user:anne"}});
+        let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "group:g", "relation": "member", "user": "user:anne"}});
         let req = serde_json::to_vec(&req).unwrap();
         let v = answer(fga.check(&s, "s", &req, Semantics::Canonical));
         assert!(
@@ -828,9 +836,9 @@ mod tests {
             "conditions":{"cx":{"name":"cx","expression":"x < 1","parameters":{"x":{"type_name":"TYPE_NAME_INT"}}}}}"#;
         let s = MemoryStore::default();
         let fga = Fga::default();
-        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        fga.write_model(&s, "s", ID, model.as_bytes());
         let write = |cond: Value, ignore: bool| {
-            let mut w = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne", "condition": cond}]}});
+            let mut w = json!({"authorization_model_id": ID, "writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne", "condition": cond}]}});
             if ignore {
                 w["writes"]["on_duplicate"] = json!("ignore");
             }
@@ -860,9 +868,9 @@ mod tests {
             "conditions":{"guard":{"name":"guard","expression":"ok","parameters":{"ok":{"type_name":"TYPE_NAME_BOOL"}}}}}"#;
         let s = MemoryStore::default();
         let fga = Fga::default();
-        fga.write_model(&s, "s", "01ARZ3NDEKTSV4RRFFQ69G5FAV", model.as_bytes());
+        fga.write_model(&s, "s", ID, model.as_bytes());
         let check = || {
-            let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+            let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
             fga.check(
                 &s,
                 "s",
@@ -873,7 +881,7 @@ mod tests {
         let put = |c: &[u8]| s.put_tuple("s", "doc:1", "viewer", "user:anne", c).unwrap();
         put(br#"{"name":"guard","context":{"ok":false}}"#);
         assert_eq!(check()["allowed"], false);
-        let ignored = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}], "on_duplicate": "ignore"}});
+        let ignored = json!({"authorization_model_id": ID, "writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}], "on_duplicate": "ignore"}});
         for bad in [
             &b"{"[..],
             b"null",
@@ -924,11 +932,15 @@ mod tests {
 
     /// Anne may view doc:1 under the permissive model, not the restrictive.
     fn anne_views(fga: &Fga, s: &MemoryStore, store: &str) -> Value {
+        anne_views_under(fga, s, store, ID)
+    }
+
+    /// `anne_views` under model `id`.
+    fn anne_views_under(fga: &Fga, s: &MemoryStore, store: &str, id: &str) -> Value {
         for rel in ["editor", "blocked"] {
             s.put_tuple(store, "doc:1", rel, "user:anne", b"").unwrap();
         }
-        let req =
-            json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+        let req = json!({"authorization_model_id": id, "tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
         fga.check(
             s,
             store,
@@ -959,6 +971,76 @@ mod tests {
         s1.put_model("c", ID, &s2.model("c", ID).unwrap().unwrap())
             .unwrap();
         assert_eq!(anne_views(&fga, &s1, "c"), false);
+    }
+
+    #[test]
+    fn model_ids_increase() {
+        let fga = Fga::default();
+        let s = MemoryStore::default();
+        const LATER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        const EARLIER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAT";
+        assert_eq!(
+            fga.write_model(&s, "s", ID, &editor_model(false))["authorization_model_id"],
+            ID
+        );
+        // From a clock behind the latest's: rejected, nothing stored.
+        let r = fga.write_model(&s, "s", EARLIER, &editor_model(true));
+        assert_eq!(r["error"]["code"], "invalid_argument", "{r}");
+        assert_eq!(s.model("s", EARLIER).unwrap(), None);
+        assert_eq!(s.latest_model("s").unwrap().unwrap().0, ID);
+        // Rewriting the latest itself is still a no-op; a greater ID is new,
+        // and other stores are not compared.
+        assert_eq!(
+            fga.write_model(&s, "s", ID, &editor_model(false))["authorization_model_id"],
+            ID
+        );
+        assert_eq!(
+            fga.write_model(&s, "s", LATER, &editor_model(true))["authorization_model_id"],
+            LATER
+        );
+        assert_eq!(anne_views_under(&fga, &s, "s", LATER), false);
+        assert_eq!(
+            fga.write_model(&s, "t", EARLIER, &editor_model(true))["authorization_model_id"],
+            EARLIER
+        );
+        // An earlier model, rewritten unchanged, stays a no-op.
+        assert_eq!(
+            fga.write_model(&s, "s", ID, &editor_model(false))["authorization_model_id"],
+            ID
+        );
+    }
+
+    #[test]
+    fn model_ids_are_required() {
+        let fga = Fga::default();
+        let s = MemoryStore::default();
+        fga.write_model(&s, "s", ID, &editor_model(false));
+        let check = |model: &str| {
+            let req = json!({"authorization_model_id": model,
+                "tuple_key": {"object": "doc:1", "relation": "viewer", "user": "user:anne"}});
+            fga.check(
+                &s,
+                "s",
+                &serde_json::to_vec(&req).unwrap(),
+                Semantics::OpenFga,
+            )
+        };
+        let write = |model: &str| {
+            let req = json!({"authorization_model_id": model,
+                "writes": {"tuple_keys": [{"object": "doc:2", "relation": "editor", "user": "user:anne"}]}});
+            fga.write(&s, "s", &serde_json::to_vec(&req).unwrap())
+        };
+        for r in [check(""), write("")] {
+            assert_eq!(r["error"]["code"], "invalid_argument", "{r}");
+            assert!(
+                r["error"]["message"].as_str().unwrap().contains("required"),
+                "{r}"
+            );
+        }
+        assert_eq!(write(ID), json!({}));
+        assert!(check(ID)["allowed"].is_boolean(), "{}", check(ID));
+        let r = check("01ARZ3NDEKTSV4RRFFQ69G5FAW");
+        assert_eq!(r["error"]["code"], "authorization_model_not_found", "{r}");
     }
 
     #[test]

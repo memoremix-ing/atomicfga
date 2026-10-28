@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/oklog/ulid/v2"
+
 	openfgav1 "github.com/openfga/api/proto/openfga/v1"
 
 	"github.com/openfga/openfga/pkg/storage"
@@ -73,4 +75,40 @@ type pinnedModel struct {
 
 func withPinnedModel(ctx context.Context, store, id string, m *openfgav1.AuthorizationModel) context.Context {
 	return context.WithValue(ctx, pinnedModelKey{}, pinnedModel{modelKey{store, id}, m})
+}
+
+// WriteAuthorizationModel stores model under an ID greater than the floor
+// the request's context carries for its store (see
+// [Session.WriteAuthorizationModel]), replacing the ID OpenFGA minted if it
+// is not. OpenFGA answers with the ID of the model it handed the datastore,
+// so the response names the ID stored.
+func (d *modelDatastore) WriteAuthorizationModel(ctx context.Context, store string, model *openfgav1.AuthorizationModel) error {
+	if f, ok := ctx.Value(modelFloorKey{}).(modelFloor); ok && f.store == store {
+		id, err := ulid.ParseStrict(model.GetId())
+		if err != nil {
+			return err
+		}
+		if id.Compare(f.id) <= 0 {
+			// The minting clock is behind the floor's: take the floor's
+			// millisecond plus one, with fresh entropy.
+			next, err := ulid.New(f.id.Time()+1, ulid.DefaultEntropy())
+			if err != nil {
+				return err
+			}
+			model.Id = next.String()
+		}
+	}
+	return d.OpenFGADatastore.WriteAuthorizationModel(ctx, store, model)
+}
+
+type modelFloorKey struct{}
+
+// modelFloor is the greatest model ID of store a model write must exceed.
+type modelFloor struct {
+	store string
+	id    ulid.ULID
+}
+
+func withModelFloor(ctx context.Context, store string, id ulid.ULID) context.Context {
+	return context.WithValue(ctx, modelFloorKey{}, modelFloor{store, id})
 }

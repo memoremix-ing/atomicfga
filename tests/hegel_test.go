@@ -276,12 +276,32 @@ func (m *machine) committedMirror(tc hegel.TestCase) mirror {
 }
 
 // drawModel picks the model to pin a request to: "" (latest) or a version.
+// drawModel draws one of the state's models, or "" (none named), which
+// atomicfga refuses (see unnamed) where OpenFGA would use the latest.
 func (m *machine) drawModel(tc hegel.TestCase, s state) string {
 	i := hegel.Draw(tc, hegel.Integers(0, len(s.models)))
 	if i == 0 {
 		return ""
 	}
 	return s.models[i-1].GetId()
+}
+
+// unnamed reports whether a request named no model, failing the case
+// unless atomicfga refused it. Such a request is not sent to OpenFGA.
+func (m *machine) unnamed(tc hegel.TestCase, model string, err error) bool {
+	if model != "" {
+		return false
+	}
+	if err == nil {
+		m.fail(tc, "atomicfga answered a request that names no model")
+	}
+	tc.Event("refused: no model named")
+	return true
+}
+
+// latestModel is the ID of the state's latest model.
+func (s state) latestModel() string {
+	return s.models[len(s.models)-1].GetId()
 }
 
 func drawFrom[T any](tc hegel.TestCase, xs []T) T {
@@ -361,6 +381,9 @@ func (m *machine) RuleWriteTuples(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.WriteRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = m.oWorking.store, pin(m.oWorking, req.GetAuthorizationModelId())
 	_, err := m.session.Write(m.ctx, req)
+	if m.unnamed(tc, req.GetAuthorizationModelId(), err) {
+		return
+	}
 	_, oerr := m.oracle.Write(m.ctx, oreq)
 	if outcome(err) != outcome(oerr) {
 		m.fail(tc, "Write %v: atomicfga %q, OpenFGA %q", req, outcome(err), outcome(oerr))
@@ -463,7 +486,7 @@ func (m *machine) RuleDiscardedSavepoint(tc hegel.TestCase) {
 	}
 	for range hegel.Draw(tc, hegel.Integers(1, 3)) {
 		t := drawFrom(tc, tuplePool)
-		req := &openfgav1.WriteRequest{StoreId: m.store}
+		req := &openfgav1.WriteRequest{StoreId: m.store, AuthorizationModelId: m.working.latestModel()}
 		if _, ok := m.working.tuples[key(t)]; ok {
 			req.Deletes = &openfgav1.WriteRequestDeletes{TupleKeys: []*openfgav1.TupleKeyWithoutCondition{tuple.TupleKeyToTupleKeyWithoutCondition(t)}, OnMissing: "ignore"}
 		} else {
@@ -546,6 +569,9 @@ func (m *machine) RuleCheck(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.CheckRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = mr.store, pin(mr, req.GetAuthorizationModelId())
 	got, err := m.session.Check(m.ctx, req)
+	if m.unnamed(tc, req.GetAuthorizationModelId(), err) {
+		return
+	}
 	want, oerr := m.oracle.Check(m.ctx, oreq)
 	if outcome(err) != outcome(oerr) || got.GetAllowed() != want.GetAllowed() {
 		m.fail(tc, "Check %v: atomicfga %v %q, OpenFGA %v %q", req, got.GetAllowed(), outcome(err), want.GetAllowed(), outcome(oerr))
@@ -567,6 +593,9 @@ func (m *machine) RuleBatchCheck(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.BatchCheckRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = mr.store, pin(mr, model)
 	got, err := m.session.BatchCheck(m.ctx, req)
+	if m.unnamed(tc, model, err) {
+		return
+	}
 	want, oerr := m.oracle.BatchCheck(m.ctx, oreq)
 	if outcome(err) != outcome(oerr) {
 		m.fail(tc, "BatchCheck %v: atomicfga %q, OpenFGA %q", req, outcome(err), outcome(oerr))
@@ -590,6 +619,9 @@ func (m *machine) RuleListObjects(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.ListObjectsRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = mr.store, pin(mr, req.GetAuthorizationModelId())
 	got, err := m.session.ListObjects(m.ctx, req)
+	if m.unnamed(tc, req.GetAuthorizationModelId(), err) {
+		return
+	}
 	want, oerr := m.oracle.ListObjects(m.ctx, oreq)
 	g, w := slices.Sorted(slices.Values(got.GetObjects())), slices.Sorted(slices.Values(want.GetObjects()))
 	if joinedOutcome(err) != joinedOutcome(oerr) || !slices.Equal(g, w) {
@@ -611,6 +643,9 @@ func (m *machine) RuleListUsers(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.ListUsersRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = mr.store, pin(mr, req.GetAuthorizationModelId())
 	got, err := m.session.ListUsers(m.ctx, req)
+	if m.unnamed(tc, req.GetAuthorizationModelId(), err) {
+		return
+	}
 	want, oerr := m.oracle.ListUsers(m.ctx, oreq)
 	g, w := sortedUsers(got.GetUsers()), sortedUsers(want.GetUsers())
 	if joinedOutcome(err) != joinedOutcome(oerr) || !slices.Equal(g, w) {
@@ -627,6 +662,9 @@ func (m *machine) RuleExpand(tc hegel.TestCase) {
 	oreq := proto.Clone(req).(*openfgav1.ExpandRequest)
 	oreq.StoreId, oreq.AuthorizationModelId = mr.store, pin(mr, req.GetAuthorizationModelId())
 	got, err := m.session.Expand(m.ctx, req)
+	if m.unnamed(tc, req.GetAuthorizationModelId(), err) {
+		return
+	}
 	want, oerr := m.oracle.Expand(m.ctx, oreq)
 	g, w := expandString(got.GetTree().GetRoot()), expandString(want.GetTree().GetRoot())
 	if outcome(err) != outcome(oerr) || g != w {
@@ -708,7 +746,7 @@ func (m *machine) InvariantIsolation(tc hegel.TestCase) {
 		m.fail(tc, "reader application rows: %d %v, committed %d", len(res.Rows), err, m.committed.app)
 	}
 	mr := m.committedMirror(tc)
-	for _, model := range append([]string{""}, modelIDs(m.working.models)...) {
+	for _, model := range modelIDs(m.working.models) {
 		for _, d := range docs {
 			for _, u := range users {
 				req := &openfgav1.CheckRequest{StoreId: m.store, AuthorizationModelId: model, TupleKey: &openfgav1.CheckRequestTupleKey{Object: d, Relation: "derived", User: u}}
@@ -791,7 +829,7 @@ func runMachine(t *testing.T, concurrent bool) {
 					}
 				}
 				if baseline := slices.Collect(maps.Values(m.working.tuples)); len(baseline) > 0 {
-					if _, err := m.session.Write(m.ctx, &openfgav1.WriteRequest{StoreId: m.store, Writes: &openfgav1.WriteRequestWrites{TupleKeys: baseline}}); err != nil {
+					if _, err := m.session.Write(m.ctx, &openfgav1.WriteRequest{StoreId: m.store, AuthorizationModelId: m.working.latestModel(), Writes: &openfgav1.WriteRequestWrites{TupleKeys: baseline}}); err != nil {
 						ht.Fatalf("write baseline: %v", err)
 					}
 				}

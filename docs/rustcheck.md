@@ -297,7 +297,7 @@ the model. The fourth is an equivalent mutant: userset reads only return
 The evaluator has no storage. Everything it needs from one is
 `store::Store` and `store::StoreMut`: an exact tuple lookup, a scan of
 `(store, object, relation)`, put and delete, and models by ID and latest
-(greatest ULID), within a transaction the caller owns, with values as
+(greatest ULID, which new model IDs must exceed), within a transaction the caller owns, with values as
 opaque bytes (a tuple's encoded condition, a model's protojson). Writes are
 validated by `api::Fga` (protobuf rules, model resolution, the
 inline-expression flag, `ValidateTupleForWrite`, implicit tuples, context
@@ -306,6 +306,15 @@ under `on_missing`/`on_duplicate`), before anything is written; checks run
 on the evaluator's synchronous runner, whose reads the store answers as
 OpenFGA's SQL datastores answer them. `store::MemoryStore` is the
 reference implementation.
+
+Model IDs are the caller's: `write_model` takes one. As in the Go engine,
+which rules apply should not hang on clocks (see "Choosing the model" in
+README.md). A new model's ID must be greater than every model ID of its
+store in the transaction, or the write fails with `invalid_argument`
+(the Go engine, which mints IDs, raises them instead); rewriting an
+existing model unchanged stays a no-op. Checks and writes must name their
+model (`authorization_model_id`): those that name none fail with
+`invalid_argument` rather than use the latest.
 
 With redb, the application wraps its transaction (`atomicfga_redb::Write(&tx)`
 or `Read(&tx)`): checks see the transaction's uncommitted writes, and
@@ -336,8 +345,8 @@ Two independent modules, composed by the host (`web/`):
 - `atomicfga_web.wasm`, the evaluator, imports eight store functions
   (`store.tuple_get`, `tuple_scan`, `tuple_put`, `tuple_delete`,
   `model_get`, `model_latest`, `model_put`, `fetch`) and exports the API
-  (`write_model`, `write`, `check`, `compile`) with protojson in and JSON
-  out. `web/atomicfga.js` binds the imports to a JavaScript store adapter.
+  (`write_model`, `write`, `check`, `compile`, and the setting
+  `set_inline_expressions`) with protojson in and JSON out. `web/atomicfga.js` binds the imports to a JavaScript store adapter.
 - `atomicfga_web_redb.wasm`, a redb store with its own transactions, imports
   only five `opfs.*` functions: redb's `StorageBackend`, which
   `web/stores/redb.js` implements with a `FileSystemSyncAccessHandle` (in a

@@ -240,7 +240,7 @@ fn canonical_checks_equal_the_least_fixed_point() {
             if o.starts_with("folder:") && !sampled.contains(&o) {
                 continue;
             }
-            let req = json!({"tuple_key": {"object": o, "relation": rel, "user": u}});
+            let req = json!({"authorization_model_id": MODEL_ID, "tuple_key": {"object": o, "relation": rel, "user": u}});
             let got = fga.check(
                 &s,
                 STORE,

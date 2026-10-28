@@ -17,6 +17,7 @@ import sqlite3InitModule from "../node_modules/@sqlite.org/sqlite-wasm/dist/inde
 
 const WASM = "/rust/target/wasm32-unknown-unknown/wasm/";
 const STORE = "01HZZZSTORE000000000000000";
+const MODEL_ID = "01HZZZ00000000000000000001";
 const REDB_FILE = "atomicfga-test.redb";
 const LIFECYCLE_FILE = "atomicfga-lifecycle.redb";
 
@@ -86,7 +87,10 @@ function workload(seed, n) {
     return t;
   };
   const txs = [];
-  const models = ["01HZZZ00000000000000000001", "01HZZZ00000000000000000002"];
+  const models = [MODEL_ID, "01HZZZ00000000000000000002"];
+  // Requests name a model: mostly the first; the second exists only once a
+  // committed transaction wrote it, and is not found before.
+  const model = () => (r() < 0.85 ? models[0] : models[1]);
   txs.push({ abort: false, ops: [{ kind: "model", id: models[0] }] });
   for (let i = 0; i < n; i++) {
     const ops = [];
@@ -94,17 +98,17 @@ function workload(seed, n) {
       const x = r();
       if (x < 0.4) {
         const writes = Array.from({ length: 1 + Math.floor(r() * 3) }, tuple);
-        const req = { writes: { tuple_keys: writes } };
+        const req = { authorization_model_id: model(), writes: { tuple_keys: writes } };
         if (r() < 0.15) req.writes.on_duplicate = "ignore";
         if (r() < 0.2) req.deletes = { tuple_keys: [tuple()].map(({ object, relation, user }) => ({ object, relation, user })) };
         ops.push({ kind: "write", req });
       } else if (x < 0.5) {
-        ops.push({ kind: "write", req: { deletes: { tuple_keys: [tuple()].map(({ object, relation, user }) => ({ object, relation, user })) } } });
+        ops.push({ kind: "write", req: { authorization_model_id: model(), deletes: { tuple_keys: [tuple()].map(({ object, relation, user }) => ({ object, relation, user })) } } });
       } else if (x < 0.52 && i > n / 2) {
         ops.push({ kind: "model", id: models[1] });
       } else {
         const object = pick(OBJECTS);
-        const req = { tuple_key: { object, relation: pick(RELATIONS[object.split(":")[0]]), user: pick(USERS.filter((u) => u !== "user:*")) } };
+        const req = { authorization_model_id: model(), tuple_key: { object, relation: pick(RELATIONS[object.split(":")[0]]), user: pick(USERS.filter((u) => u !== "user:*")) } };
         if (r() < 0.3) req.context = { level: Math.floor(r() * 3) };
         if (r() < 0.1) req.contextual_tuples = { tuple_keys: [tuple()] };
         ops.push({ kind: "check", req, canonical: r() < 0.3 });
@@ -147,7 +151,7 @@ function probe(evaluator, adapter) {
     for (const object of OBJECTS)
       for (const relation of RELATIONS[object.split(":")[0]])
         for (const user of USERS.filter((u) => u !== "user:*")) {
-          const r = evaluator.check(tx, STORE, { tuple_key: { object, relation, user }, context: { level: 2 } });
+          const r = evaluator.check(tx, STORE, { authorization_model_id: MODEL_ID, tuple_key: { object, relation, user }, context: { level: 2 } });
           delete r.reads_total;
           out.push(`${object}#${relation}@${user}: ${JSON.stringify(r)}`);
         }
@@ -223,7 +227,7 @@ function bulk(evaluator, adapter, tuples) {
   return ms(() => {
     for (let i = 0; i < keys.length; i += 100)
       transaction(adapter, true, (tx) => {
-        const r = evaluator.write(tx, STORE, { writes: { tuple_keys: keys.slice(i, i + 100) } });
+        const r = evaluator.write(tx, STORE, { authorization_model_id: MODEL_ID, writes: { tuple_keys: keys.slice(i, i + 100) } });
         if (r.error) throw new Error(JSON.stringify(r.error));
       });
   })[0];
@@ -269,13 +273,13 @@ async function run(phase) {
     for (const [name, open] of Object.entries(opens)) {
       const adapter = await open();
       try {
-        transaction(adapter, true, (tx) => evaluator.writeModel(tx, STORE, "01HZZZ00000000000000000001", MODEL));
+        transaction(adapter, true, (tx) => evaluator.writeModel(tx, STORE, MODEL_ID, MODEL));
         const loadMs = bulk(evaluator, adapter, 10000);
         const checks = [
-          ["direct", { tuple_key: { object: "doc:d5", relation: "editor", user: "user:u35" } }],
-          ["denied", { tuple_key: { object: "doc:d5", relation: "editor", user: "user:nobody" } }],
-          ["parent chain (depth 3)", { tuple_key: { object: "doc:d555", relation: "viewer", user: "user:u5" } }],
-          ["exclusion", { tuple_key: { object: "doc:d77", relation: "can_read", user: "user:u77" } }],
+          ["direct", { authorization_model_id: MODEL_ID, tuple_key: { object: "doc:d5", relation: "editor", user: "user:u35" } }],
+          ["denied", { authorization_model_id: MODEL_ID, tuple_key: { object: "doc:d5", relation: "editor", user: "user:nobody" } }],
+          ["parent chain (depth 3)", { authorization_model_id: MODEL_ID, tuple_key: { object: "doc:d555", relation: "viewer", user: "user:u5" } }],
+          ["exclusion", { authorization_model_id: MODEL_ID, tuple_key: { object: "doc:d77", relation: "can_read", user: "user:u77" } }],
         ];
         const timings = {};
         transaction(adapter, false, (tx) => {

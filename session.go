@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/oklog/ulid/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 
 	openfgav1 "github.com/openfga/api/proto/openfga/v1"
 
@@ -71,8 +71,9 @@ type modelRequest interface {
 	Validate() error
 }
 
-// resolveModel pins the request to a model that is visible in this
-// transaction before OpenFGA's process-wide model caches are consulted.
+// resolveModel requires the request to name a model ([ErrModelIDRequired])
+// and checks that the model is visible in this transaction before OpenFGA's
+// process-wide model caches are consulted.
 //
 // Those caches (and the single-flight groups in front of them) are shared by
 // every session, so they could otherwise serve a model that another
@@ -90,14 +91,7 @@ func resolveModel[R modelRequest](ctx context.Context, s *Session, req R) (R, er
 	}
 	store, id := req.GetStoreId(), req.GetAuthorizationModelId()
 	if id == "" {
-		latest, err := s.latestModel(ctx, store)
-		if err != nil {
-			return req, err
-		}
-		if latest == "" {
-			return req, serverErrors.LatestAuthorizationModelNotFound(store)
-		}
-		return withModelID(req, latest), nil
+		return req, ErrModelIDRequired
 	}
 	if _, err := ulid.Parse(id); err != nil {
 		return req, nil // OpenFGA reports it as not found without a lookup
@@ -110,19 +104,6 @@ func resolveModel[R modelRequest](ctx context.Context, s *Session, req R) (R, er
 		return req, serverErrors.AuthorizationModelNotFound(id)
 	}
 	return req, nil
-}
-
-// withModelID returns a shallow copy of req with its model ID set, leaving
-// the caller's request untouched.
-func withModelID[R proto.Message](req R, id string) R {
-	src := req.ProtoReflect()
-	dst := src.New()
-	src.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		dst.Set(fd, v)
-		return true
-	})
-	dst.Set(dst.Descriptor().Fields().ByName("authorization_model_id"), protoreflect.ValueOfString(id))
-	return dst.Interface().(R)
 }
 
 func (s *Session) latestModel(ctx context.Context, store string) (string, error) {
@@ -313,8 +294,54 @@ func (s *Session) ReadAuthorizationModel(ctx context.Context, req *openfgav1.Rea
 	})
 }
 
+// WriteAuthorizationModel writes a model as OpenFGA does, except that its ID
+// is always greater than every model ID of the store the transaction sees.
+// OpenFGA mints the ID from the clock, and the latest model is the one with
+// the greatest ID; when the clock is behind the one that minted the store's
+// latest model (another server's, or this one's before it was set back), the
+// new model would rank below it, and requests naming no model would keep
+// using the old one. Such an ID is replaced by the latest's millisecond plus
+// one, with fresh entropy; the response names the ID stored.
+//
+// On PostgreSQL, model writes to one store also take a transaction-scoped
+// advisory lock, so a second transaction writing a model to the store waits
+// for the first to end, then sees its model (at READ COMMITTED, the default;
+// SERIALIZABLE aborts one of them instead; REPEATABLE READ does neither,
+// so write models at READ COMMITTED). SQLite runs one writer at a time.
 func (s *Session) WriteAuthorizationModel(ctx context.Context, req *openfgav1.WriteAuthorizationModelRequest) (*openfgav1.WriteAuthorizationModelResponse, error) {
-	return do(s, ctx, req, s.engine.server.WriteAuthorizationModel)
+	return do(s, ctx, req, s.writeAuthorizationModel)
+}
+
+func (s *Session) writeAuthorizationModel(ctx context.Context, req *openfgav1.WriteAuthorizationModelRequest) (*openfgav1.WriteAuthorizationModelResponse, error) {
+	if req.Validate() != nil {
+		return s.engine.server.WriteAuthorizationModel(ctx, req) // let OpenFGA report the validation error
+	}
+	store := req.GetStoreId()
+	if s.engine.dialect == Postgres {
+		_, err := s.engine.stbl.Select().
+			Column(sq.Expr("pg_advisory_xact_lock(hashtextextended(?, 0))", "atomicfga/authorization_model/"+store)).
+			ExecContext(ctx)
+		if err != nil {
+			return nil, serverErrors.HandleError("", err)
+		}
+	}
+	latest, err := s.latestModel(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	if latest != "" {
+		floor, err := ulid.ParseStrict(latest)
+		if err != nil {
+			return nil, serverErrors.HandleError("", fmt.Errorf("store %s: latest model ID %q: %w", store, latest, err))
+		}
+		ctx = withModelFloor(ctx, store, floor)
+	}
+	resp, err := s.engine.server.WriteAuthorizationModel(ctx, req)
+	if err == nil && resp.GetAuthorizationModelId() <= latest {
+		// Unreachable unless OpenFGA stops answering with the ID it stored.
+		return nil, status.Errorf(codes.Internal, "atomicfga: model %s was written below the store's latest model %s; roll back", resp.GetAuthorizationModelId(), latest)
+	}
+	return resp, err
 }
 
 func (s *Session) WriteAssertions(ctx context.Context, req *openfgav1.WriteAssertionsRequest) (*openfgav1.WriteAssertionsResponse, error) {

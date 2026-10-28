@@ -209,12 +209,13 @@ mod tests {
     use redb::{backends::InMemoryBackend, Database, ReadableDatabase};
     use serde_json::{json, Value};
 
+    const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const MODEL: &str = r#"{"schema_version":"1.1","type_definitions":[{"type":"user"},
         {"type":"doc","relations":{"viewer":{"this":{}}},
          "metadata":{"relations":{"viewer":{"directly_related_user_types":[{"type":"user"}]}}}}]}"#;
 
     fn check(fga: &Fga, s: &impl Store, user: &str) -> Value {
-        let req = json!({"tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
+        let req = json!({"authorization_model_id": ID, "tuple_key": {"object": "doc:1", "relation": "viewer", "user": user}});
         fga.check(
             s,
             "s",
@@ -229,14 +230,9 @@ mod tests {
             .create_with_backend(InMemoryBackend::new())
             .unwrap();
         let fga = Fga::default();
-        let w = json!({"writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}]}});
+        let w = json!({"authorization_model_id": ID, "writes": {"tuple_keys": [{"object": "doc:1", "relation": "viewer", "user": "user:anne"}]}});
         let tx = db.begin_write().unwrap();
-        fga.write_model(
-            &Write(&tx),
-            "s",
-            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            MODEL.as_bytes(),
-        );
+        fga.write_model(&Write(&tx), "s", ID, MODEL.as_bytes());
         assert_eq!(
             fga.write(&Write(&tx), "s", &serde_json::to_vec(&w).unwrap()),
             json!({})
@@ -249,17 +245,12 @@ mod tests {
         let r = db.begin_read().unwrap();
         assert_eq!(
             check(&fga, &Read(&r), "user:anne")["error"]["code"],
-            "latest_authorization_model_not_found"
+            "authorization_model_not_found"
         );
         drop(r);
 
         let tx = db.begin_write().unwrap();
-        fga.write_model(
-            &Write(&tx),
-            "s",
-            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            MODEL.as_bytes(),
-        );
+        fga.write_model(&Write(&tx), "s", ID, MODEL.as_bytes());
         fga.write(&Write(&tx), "s", &serde_json::to_vec(&w).unwrap());
         tx.commit().unwrap();
         let r = db.begin_read().unwrap();
