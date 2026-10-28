@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FGA primer: from relationships to clock-free model handling in atomicfga</title>
+<style>
+  :root {
+    --f-bg: #fcfbf8; --f-fg: #1d1d20; --f-mut: #66666d; --f-brd: #dedbd3; --f-card: #ffffff;
+    --f-code: #f2f0ea; --f-c1: #2f6fde; --f-c2: #8a4fd8; --f-c3: #1a8a6a; --f-c4: #c46a12;
+    --f-ok: #1a8a4a; --f-bad: #c8322b; --f-warn: #b7791f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --f-bg: #151517; --f-fg: #ececef; --f-mut: #9b9ba3; --f-brd: #34343a; --f-card: #1d1d21;
+      --f-code: #232328; --f-c1: #6aa0ff; --f-c2: #b48cff; --f-c3: #4fc7a2; --f-c4: #f0a050;
+      --f-ok: #4cc77d; --f-bad: #ff6b62; --f-warn: #e8b04a;
+    }
+  }
+  :root {
+    --bg: var(--background, var(--f-bg));
+    --fg: var(--foreground, var(--f-fg));
+    --mut: var(--muted-foreground, var(--f-mut));
+    --brd: var(--border, var(--f-brd));
+    --cardbg: var(--card, var(--f-card));
+    --codebg: var(--code-background, var(--f-code));
+    --c1: var(--chart-1, var(--f-c1));
+    --c2: var(--chart-2, var(--f-c2));
+    --c3: var(--chart-3, var(--f-c3));
+    --c4: var(--chart-4, var(--f-c4));
+    --ok: var(--success, var(--f-ok));
+    --bad: var(--destructive, var(--f-bad));
+    --warn: var(--warning, var(--f-warn));
+    --r: var(--radius, 8px);
+  }
+  html { background: var(--bg); color: var(--fg); font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif); }
+  body { margin: 0; line-height: 1.6; font-size: 15.5px; }
+  main { max-width: 780px; margin: 0 auto; padding: 8px 0 48px; }
+  @media (min-width: 840px) { main { padding: 32px 0 64px; } }
+  h1 { font-size: 1.75rem; line-height: 1.25; margin: 0 0 .4rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.3rem; margin: 2.6rem 0 .6rem; padding-top: 1.2rem; border-top: 1px solid var(--brd); letter-spacing: -0.005em; }
+  h3 { font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+  .part { font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); margin: 3rem 0 -1.6rem; font-weight: 600; }
+  p, li { max-width: 72ch; }
+  .lede { color: var(--mut); font-size: 1.02rem; margin-top: 0; }
+  code, pre, .mono { font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace); font-size: .86em; }
+  code { background: var(--codebg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+  pre { background: var(--codebg); padding: 14px 16px; border-radius: var(--r); overflow-x: auto; line-height: 1.5; font-size: .82rem; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .fig { margin: 1.2rem 0 1.4rem; padding: 16px; border: 1px solid var(--brd); border-radius: var(--r); background: var(--cardbg); }
+  .fig figcaption, .cap { font-size: .85rem; color: var(--mut); margin-top: .6rem; }
+  svg { display: block; width: 100%; height: auto; }
+  @media (max-width: 600px) { .fig { overflow-x: auto; } .fig svg { min-width: 540px; } .scroll table { min-width: 620px; } }
+  td code { overflow-wrap: normal; }
+  svg text { font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif); fill: var(--fg); }
+  svg .mono { font-family: var(--font-mono, ui-monospace, Menlo, monospace); }
+  svg .mut { fill: var(--mut); }
+  .node { fill: var(--cardbg); stroke: var(--brd); stroke-width: 1.5; }
+  .n-user { stroke: var(--c1); } .n-group { stroke: var(--c2); } .n-folder { stroke: var(--c4); } .n-doc { stroke: var(--c3); }
+  .edge { stroke: var(--mut); stroke-width: 1.5; fill: none; }
+  .edge-bad { stroke: var(--bad); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .tag { display: inline-block; font-size: .72rem; font-weight: 600; padding: .1em .55em; border-radius: 999px; border: 1px solid currentColor; line-height: 1.5; white-space: nowrap; }
+  .t-high { color: var(--bad); } .t-med { color: var(--warn); } .t-low { color: var(--mut); } .t-none { color: var(--ok); }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; margin: .8rem 0 1.2rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--brd); }
+  th { font-weight: 600; color: var(--mut); font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+  .scroll { overflow-x: auto; }
+  .callout { border-left: 3px solid var(--c1); padding: 10px 14px; margin: 1.2rem 0; background: var(--cardbg); border-radius: 0 var(--r) var(--r) 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout p { margin: .3rem 0; }
+  .toc { columns: 2 240px; padding-left: 1.1rem; font-size: .92rem; }
+  .toc li { margin: .1rem 0; }
+  a { color: var(--c1); }
+  .seg { display: inline-flex; border: 1px solid var(--brd); border-radius: 999px; overflow: hidden; margin-bottom: 10px; }
+  .seg button { font: inherit; font-size: .85rem; border: 0; background: transparent; color: var(--fg); padding: 4px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--c1); color: var(--primary-foreground, #fff); }
+  .tree, .tree ul { list-style: none; margin: 0; padding-left: 1.2rem; }
+  .tree { padding-left: 0; font-size: .88rem; }
+  .tree li { position: relative; margin: 4px 0; max-width: none; }
+  .tree ul li::before { content: ""; position: absolute; left: -.85rem; top: .8em; width: .6rem; border-top: 1px solid var(--brd); }
+  .tree ul { border-left: 1px solid var(--brd); margin-left: .3rem; }
+  .op { font-size: .7rem; font-weight: 700; letter-spacing: .06em; color: var(--c2); margin-right: .3rem; }
+  .res { display: inline-block; min-width: 1.4em; text-align: center; font-weight: 700; margin-right: .35rem; }
+  .res.yes { color: var(--ok); } .res.no { color: var(--bad); } .res.skip { color: var(--mut); }
+  .read { color: var(--mut); font-size: .82rem; }
+  .ulid { font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 1.25rem; letter-spacing: .06em; word-break: break-all; }
+  .ulid .ts { color: var(--c1); } .ulid .rnd { color: var(--c4); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input[type=text] { font: inherit; font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: .9rem; padding: 6px 8px; border: 1px solid var(--brd); border-radius: 6px; background: var(--bg); color: var(--fg); flex: 1 1 260px; min-width: 0; }
+  button.btn { font: inherit; font-size: .85rem; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--brd); background: var(--bg); color: var(--fg); cursor: pointer; }
+  label.sl { display: grid; grid-template-columns: 13rem 1fr 5.5rem; gap: 10px; align-items: center; font-size: .88rem; margin: 6px 0; }
+  @media (max-width: 560px) { label.sl { grid-template-columns: 1fr 4.5rem; } label.sl span:first-child { grid-column: 1 / -1; } }
+  input[type=range] { width: 100%; accent-color: var(--c1); }
+  .verdict { font-weight: 600; margin-top: 8px; }
+  .verdict.bad { color: var(--bad); } .verdict.ok { color: var(--ok); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--brd); border-radius: var(--r); padding: 12px 14px; background: var(--cardbg); }
+  .card h4 { margin: 0 0 .3rem; font-size: .95rem; }
+  .card p { margin: .2rem 0; font-size: .88rem; }
+  .small { font-size: .85rem; color: var(--mut); }
+  dl.gloss dt { font-weight: 600; margin-top: .7rem; }
+  dl.gloss dd { margin: .1rem 0 0 0; color: var(--mut); font-size: .92rem; max-width: 72ch; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>FGA, from the ground up — and why atomicfga cares what time it is</h1>
+<p class="lede">A primer that starts at “what is fine-grained authorization?” and ends at exactly where atomicfga depends on server clocks, and how the way model IDs are chosen — now enforced by atomicfga — removes most of that dependence.</p>
+
+<ol class="toc">
+  <li><a href="#question">The authorization question</a></li>
+  <li><a href="#vocab">Objects, relations, users, tuples</a></li>
+  <li><a href="#model">The authorization model</a></li>
+  <li><a href="#check">How a Check is answered</a></li>
+  <li><a href="#versions">Models are versioned</a></li>
+  <li><a href="#atomicfga">What atomicfga changes</a></li>
+  <li><a href="#ulid">ULIDs: IDs with a clock inside</a></li>
+  <li><a href="#clockmap">Every place the clock enters</a></li>
+  <li><a href="#skew">Failure 1: the latest model goes backwards</a></li>
+  <li><a href="#latecommit">Failure 2: a change feed that skips</a></li>
+  <li><a href="#pointer">Fix: choose the model by data, not by time</a></li>
+  <li><a href="#after">What is left, and moving tenants</a></li>
+  <li><a href="#others">Appendix: other authorization systems</a></li>
+  <li><a href="#glossary">Glossary</a></li>
+</ol>
+
+<!-- ============================================================ -->
+<div class="part">Part 1 · Fine-grained authorization</div>
+
+<h2 id="question">1. The authorization question</h2>
+<p><em>Authentication</em> establishes who you are. <em>Authorization</em> answers a different question, asked thousands of times a second in a busy application:</p>
+<div class="callout"><p style="font-size:1.05rem"><strong>Can</strong> <code>user:anne</code> <strong>do</strong> <code>can_view</code> <strong>on</strong> <code>doc:plan</code>?</p></div>
+<p>Three broad families of systems answer it:</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 210" role="img" aria-label="RBAC, ABAC and ReBAC compared">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--mut)"/></marker>
+  </defs>
+  <!-- RBAC -->
+  <text x="120" y="22" text-anchor="middle" font-weight="700">RBAC</text>
+  <text x="120" y="40" text-anchor="middle" class="mut" font-size="12">roles grant permissions</text>
+  <rect class="node n-user" x="60" y="62" width="120" height="30" rx="6"/><text x="120" y="82" text-anchor="middle" font-size="13">anne</text>
+  <line class="edge" x1="120" y1="92" x2="120" y2="116" marker-end="url(#ah)"/>
+  <rect class="node n-group" x="60" y="118" width="120" height="30" rx="6"/><text x="120" y="138" text-anchor="middle" font-size="13">role: editor</text>
+  <line class="edge" x1="120" y1="148" x2="120" y2="172" marker-end="url(#ah)"/>
+  <text x="120" y="190" text-anchor="middle" font-size="13">edit <tspan class="mut">any</tspan> doc</text>
+
+  <!-- ABAC -->
+  <text x="360" y="22" text-anchor="middle" font-weight="700">ABAC</text>
+  <text x="360" y="40" text-anchor="middle" class="mut" font-size="12">rules over attributes</text>
+  <rect class="node" x="250" y="62" width="220" height="86" rx="6"/>
+  <text x="264" y="84" class="mono" font-size="12">user.dept == doc.dept</text>
+  <text x="264" y="106" class="mono" font-size="12">&amp;&amp; doc.level &lt;= user.clr</text>
+  <text x="264" y="128" class="mono" font-size="12">&amp;&amp; req.ip in office</text>
+  <line class="edge" x1="360" y1="148" x2="360" y2="172" marker-end="url(#ah)"/>
+  <text x="360" y="190" text-anchor="middle" font-size="13">allow / deny</text>
+
+  <!-- ReBAC -->
+  <text x="600" y="22" text-anchor="middle" font-weight="700">ReBAC (FGA)</text>
+  <text x="600" y="40" text-anchor="middle" class="mut" font-size="12">permissions follow relationships</text>
+  <rect class="node n-user" x="530" y="62" width="64" height="26" rx="6"/><text x="562" y="80" text-anchor="middle" font-size="12">anne</text>
+  <rect class="node n-group" x="610" y="62" width="76" height="26" rx="6"/><text x="648" y="80" text-anchor="middle" font-size="12">eng</text>
+  <rect class="node n-folder" x="610" y="112" width="76" height="26" rx="6"/><text x="648" y="130" text-anchor="middle" font-size="12">folder q3</text>
+  <rect class="node n-doc" x="530" y="112" width="64" height="26" rx="6"/><text x="562" y="130" text-anchor="middle" font-size="12">plan</text>
+  <line class="edge" x1="594" y1="75" x2="608" y2="75" marker-end="url(#ah)"/>
+  <line class="edge" x1="648" y1="88" x2="648" y2="110" marker-end="url(#ah)"/>
+  <line class="edge" x1="610" y1="125" x2="596" y2="125" marker-end="url(#ah)"/>
+  <text x="600" y="190" text-anchor="middle" font-size="13">view <tspan class="mut">this</tspan> doc</text>
+</svg>
+<figcaption>RBAC is coarse (“editors edit documents”). ABAC evaluates predicates over attributes. ReBAC — relationship-based access control, which is what “FGA” systems do — stores who is related to what, and derives permissions by following those relationships.</figcaption>
+</figure>
+
+<p>Google described its ReBAC system, <strong>Zanzibar</strong>, in a 2019 paper; it answers authorization for Drive, YouTube, Calendar and more. <strong>OpenFGA</strong> is an open-source system in that style (a CNCF project started at Auth0/Okta). Two ideas carry over from Zanzibar:</p>
+<ol>
+  <li><strong>Relationships are data.</strong> “anne is a member of eng” is a row, written when it becomes true.</li>
+  <li><strong>Rules are a model.</strong> “viewers of a folder can view its documents” is written once, separately, and applies to all those rows.</li>
+</ol>
+
+<h2 id="vocab">2. Objects, relations, users, tuples</h2>
+<p>Everything in OpenFGA is described with four words:</p>
+<ul>
+  <li><strong>Object</strong> — a thing with a type and an ID: <code>doc:plan</code>, <code>folder:q3</code>, <code>group:eng</code>.</li>
+  <li><strong>Relation</strong> — a named link an object can have: <code>viewer</code>, <code>member</code>, <code>parent</code>.</li>
+  <li><strong>User</strong> — whatever sits on the other end: a concrete <code>user:anne</code>, a whole set of users written as <code>group:eng#member</code> (“every member of eng”, a <em>userset</em>), everyone of a type <code>user:*</code> (a <em>wildcard</em>), or even another object (<code>folder:q3</code>).</li>
+  <li><strong>Tuple</strong> — one stored fact: <em>user</em> has <em>relation</em> to <em>object</em>.</li>
+</ul>
+<p>A <strong>store</strong> holds one set of tuples plus that set’s models. Stores are fully separate from each other; in a multi-tenant system, one store per tenant is the natural layout.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 330" role="img" aria-label="Relationship graph of the running example">
+  <defs>
+    <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--mut)"/></marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--bad)"/></marker>
+  </defs>
+  <rect class="node n-user" x="15" y="82" width="110" height="38" rx="8"/><text x="70" y="106" text-anchor="middle" class="mono" font-size="13">user:anne</text>
+  <rect class="node n-user" x="15" y="182" width="110" height="38" rx="8"/><text x="70" y="206" text-anchor="middle" class="mono" font-size="13">user:bob</text>
+  <rect class="node n-group" x="205" y="132" width="110" height="38" rx="8"/><text x="260" y="156" text-anchor="middle" class="mono" font-size="13">group:eng</text>
+  <rect class="node n-folder" x="395" y="132" width="110" height="38" rx="8"/><text x="450" y="156" text-anchor="middle" class="mono" font-size="13">folder:q3</text>
+  <rect class="node n-doc" x="595" y="132" width="110" height="38" rx="8"/><text x="650" y="156" text-anchor="middle" class="mono" font-size="13">doc:plan</text>
+
+  <path class="edge" d="M125 101 L203 143" marker-end="url(#ah2)"/>
+  <text x="168" y="110" text-anchor="middle" font-size="12">member</text>
+  <path class="edge" d="M125 201 L203 160" marker-end="url(#ah2)"/>
+  <text x="168" y="199" text-anchor="middle" font-size="12">member</text>
+  <path class="edge" d="M315 151 L393 151" marker-end="url(#ah2)"/>
+  <text x="354" y="141" text-anchor="middle" font-size="12">viewer</text>
+  <text x="354" y="168" text-anchor="middle" font-size="10.5" class="mut">(as #member)</text>
+  <path class="edge" d="M505 151 L593 151" marker-end="url(#ah2)"/>
+  <text x="549" y="141" text-anchor="middle" font-size="12">parent</text>
+  <path class="edge-bad" d="M125 212 C 300 310, 540 310, 640 172" marker-end="url(#ahb)"/>
+  <text x="400" y="306" text-anchor="middle" font-size="12" fill="var(--bad)" style="fill:var(--bad)">blocked</text>
+
+  <text x="15" y="30" font-size="12" class="mut">Arrows point from the tuple’s user to its object and carry the relation.</text>
+  <text x="15" y="48" font-size="12" class="mut">There is no arrow from anne to doc:plan — access to it must be derived.</text>
+</svg>
+<div class="scroll">
+<table>
+  <thead><tr><th>#</th><th>object</th><th>relation</th><th>user</th><th>reads as</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>group:eng</code></td><td><code>member</code></td><td><code>user:anne</code></td><td>anne is a member of eng</td></tr>
+    <tr><td>2</td><td><code>group:eng</code></td><td><code>member</code></td><td><code>user:bob</code></td><td>bob is a member of eng</td></tr>
+    <tr><td>3</td><td><code>folder:q3</code></td><td><code>viewer</code></td><td><code>group:eng#member</code></td><td>every member of eng views q3</td></tr>
+    <tr><td>4</td><td><code>doc:plan</code></td><td><code>parent</code></td><td><code>folder:q3</code></td><td>q3 is plan’s parent folder</td></tr>
+    <tr><td>5</td><td><code>doc:plan</code></td><td><code>blocked</code></td><td><code>user:bob</code></td><td>bob is blocked from plan</td></tr>
+  </tbody>
+</table>
+</div>
+<figcaption>The running example: five tuples. They say nothing yet about who can <em>view</em> <code>doc:plan</code>; that is the model’s job.</figcaption>
+</figure>
+
+<h2 id="model">3. The authorization model</h2>
+<p>The model declares the types, which relations each type has, and — most importantly — how a relation can be <em>derived</em> from other relations. OpenFGA has a readable DSL; the canonical form, and the one atomicfga accepts, is the equivalent JSON (<code>WriteAuthorizationModelRequest</code>). The DSL is shown here because it is easier to read:</p>
+<pre><code>model
+  schema 1.1
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type folder
+  relations
+    define owner:  [user]
+    define viewer: [user, group#member] or owner
+
+type doc
+  relations
+    define parent:   [folder]
+    define owner:    [user]
+    define editor:   [user] or owner
+    define viewer:   [user, user:*] or editor or viewer from parent
+    define blocked:  [user]
+    define can_view: viewer but not blocked</code></pre>
+
+<p>Each <code>define</code> is built from a few operators:</p>
+<div class="grid2">
+  <div class="card"><h4>Direct — <code>[user, group#member]</code></h4><p>True if a tuple says so. The brackets list which kinds of users such tuples may name; writes that name anything else are rejected.</p></div>
+  <div class="card"><h4>Computed — <code>or owner</code></h4><p>“Every owner is also an editor.” Same object, different relation.</p></div>
+  <div class="card"><h4>Tuple-to-userset — <code>viewer from parent</code></h4><p>“Follow this object’s <code>parent</code> tuples, and ask the parent about <code>viewer</code>.” This is how permissions flow down hierarchies.</p></div>
+  <div class="card"><h4>Set algebra — <code>or</code>, <code>and</code>, <code>but not</code></h4><p>Union, intersection, exclusion. <code>can_view</code> above is “viewer, except the blocked”.</p></div>
+</div>
+<p style="margin-top:1rem"><strong>Conditions</strong> refine a direct relation with a small CEL expression evaluated at check time, e.g. <code>[user with office_hours]</code>. Note where its inputs come from — the condition’s parameters are filled from the tuple and from the request’s <code>context</code>, so a time-based rule receives the time <em>from the caller</em>, not from the server’s clock. Conditions do not make a Check depend on server time.</p>
+
+<h2 id="check">4. How a Check is answered</h2>
+<p>A Check is a search: starting from the requested relation, expand the model’s rule into sub-questions, read the tuples each one needs, and stop as soon as the answer is settled. Choose a user to walk through <code>Check(user, can_view, doc:plan)</code>:</p>
+
+<figure class="fig">
+<div class="seg" role="group" aria-label="Choose user">
+  <button type="button" data-user="anne" aria-pressed="true">user:anne</button>
+  <button type="button" data-user="bob" aria-pressed="false">user:bob</button>
+</div>
+<ul class="tree" id="checktree">
+  <li><span class="res" data-anne="yes" data-bob="no"></span><span class="op">BUT NOT</span><code>doc:plan#can_view</code> = viewer but not blocked
+    <ul>
+      <li><span class="res" data-anne="yes" data-bob="yes"></span><span class="op">OR</span><code>doc:plan#viewer</code>
+        <ul>
+          <li><span class="res" data-anne="no" data-bob="no"></span><span class="op">DIRECT</span>viewer tuples on doc:plan <span class="read">read <code>doc:plan#viewer@…</code> → none</span></li>
+          <li><span class="res" data-anne="no" data-bob="no"></span><span class="op">COMPUTED</span><code>doc:plan#editor</code> <span class="read">→ editor tuples, owner tuples → none</span></li>
+          <li><span class="res" data-anne="yes" data-bob="yes"></span><span class="op">FROM PARENT</span>viewer from parent
+            <ul>
+              <li><span class="res" data-anne="yes" data-bob="yes"></span>read <code>doc:plan#parent</code> <span class="read">→ <code>folder:q3</code> (tuple 4)</span></li>
+              <li><span class="res" data-anne="yes" data-bob="yes"></span><span class="op">OR</span><code>folder:q3#viewer</code>
+                <ul>
+                  <li><span class="res" data-anne="yes" data-bob="yes"></span><span class="op">DIRECT</span>read <code>folder:q3#viewer</code> <span class="read">→ <code>group:eng#member</code> (tuple 3), a userset: ask it</span>
+                    <ul>
+                      <li><span class="res" data-anne="yes" data-bob="yes"></span><code>group:eng#member</code> <span class="read">read <code>group:eng#member@<span class="who">user:anne</span></code> → found (tuple <span class="whotuple">1</span>)</span></li>
+                    </ul>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li><span class="res" data-anne="no" data-bob="yes"></span><span class="op">DIRECT</span><code>doc:plan#blocked</code> <span class="read">read <code>doc:plan#blocked@<span class="who">user:anne</span></code> → <span class="blockedres">none</span></span></li>
+    </ul>
+  </li>
+</ul>
+<div class="verdict" id="checkverdict"></div>
+<figcaption>The answer depends only on two inputs: <strong>the tuples</strong> and <strong>the model</strong>. Change either and the answer may change. (OpenFGA explores branches concurrently and may stop at whichever settles first, so the order of reads is not fixed — the answer is.)</figcaption>
+</figure>
+
+<p>Other API calls are variations on the same search: <code>ListObjects</code> (“which docs can anne view?”), <code>ListUsers</code> (“who can view plan?”), <code>Expand</code> (show the tree). <code>Write</code> adds and deletes tuples; <code>Read</code> lists them; <code>ReadChanges</code> is a feed of tuple writes and deletes, in order, for syncing other systems.</p>
+
+<h2 id="versions">5. Models are versioned</h2>
+<p>Since the answer depends on the model, changing the model is a big deal. OpenFGA never edits a model: writing one <em>adds a new version</em> with a fresh ID, and old versions stay readable forever. Tuples are not tied to any version — the same rows are reinterpreted by whichever model a request uses.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 230" role="img" aria-label="Model versions sharing one set of tuples">
+  <defs>
+    <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--mut)"/></marker>
+    <marker id="ah3c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--c1)"/></marker>
+  </defs>
+  <line x1="20" y1="120" x2="700" y2="120" stroke="var(--brd)" stroke-width="2"/>
+  <text x="700" y="140" text-anchor="end" font-size="11" class="mut">time →</text>
+  <g>
+    <rect class="node" x="60" y="70" width="140" height="40" rx="6"/>
+    <text x="130" y="88" text-anchor="middle" font-size="13" font-weight="600">model M1</text>
+    <text x="130" y="103" text-anchor="middle" font-size="10.5" class="mono mut">01JA…  (1st)</text>
+  </g>
+  <g>
+    <rect class="node" x="290" y="70" width="140" height="40" rx="6"/>
+    <text x="360" y="88" text-anchor="middle" font-size="13" font-weight="600">model M2</text>
+    <text x="360" y="103" text-anchor="middle" font-size="10.5" class="mono mut">01JC…  (2nd)</text>
+  </g>
+  <g>
+    <rect class="node" x="520" y="70" width="140" height="40" rx="6" style="stroke:var(--c1);stroke-width:2"/>
+    <text x="590" y="88" text-anchor="middle" font-size="13" font-weight="600">model M3</text>
+    <text x="590" y="103" text-anchor="middle" font-size="10.5" class="mono mut">01JE…  (3rd)</text>
+  </g>
+  <text x="590" y="30" text-anchor="middle" font-size="12" style="fill:var(--c1)">“latest” = greatest ID</text>
+  <line x1="590" y1="36" x2="590" y2="66" stroke="var(--c1)" stroke-width="1.5" marker-end="url(#ah3c)"/>
+  <text x="360" y="30" text-anchor="middle" font-size="12" class="mut">request with authorization_model_id = M2</text>
+  <line x1="360" y1="36" x2="360" y2="66" class="edge" marker-end="url(#ah3)"/>
+  <rect x="20" y="160" width="680" height="44" rx="6" fill="var(--codebg)" stroke="var(--brd)"/>
+  <text x="360" y="187" text-anchor="middle" font-size="13">one set of tuples — not versioned, read by whichever model a request uses</text>
+</svg>
+<figcaption>Every Check, Write, ListObjects… runs against one model. If the request names one (<code>authorization_model_id</code>), that one is used. If it doesn’t, OpenFGA uses the <strong>latest</strong> — and “latest” is defined as <strong>the greatest ID</strong>. Hold on to that; it is where the clock comes in. (atomicfga refuses such requests: see §11.)</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<div class="part">Part 2 · atomicfga</div>
+
+<h2 id="atomicfga">6. What atomicfga changes</h2>
+<p>A normal OpenFGA deployment is a separate server with its own database. Your application writes its own rows to its database and, separately, tells OpenFGA about relationships. Those are two commits; between them — or if one fails — the two systems disagree. atomicfga runs unmodified OpenFGA code <em>inside your application’s SQL transaction</em>, against OpenFGA’s tables living in <em>your</em> database.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 260" role="img" aria-label="Upstream OpenFGA versus atomicfga">
+  <defs>
+    <marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--mut)"/></marker>
+  </defs>
+  <text x="170" y="22" text-anchor="middle" font-weight="700">OpenFGA as a service</text>
+  <rect class="node" x="110" y="40" width="120" height="34" rx="6"/><text x="170" y="62" text-anchor="middle" font-size="13">your app</text>
+  <path class="edge" d="M140 74 L80 120" marker-end="url(#ah4)"/>
+  <path class="edge" d="M200 74 L260 120" marker-end="url(#ah4)"/>
+  <text x="92" y="96" text-anchor="end" font-size="11" class="mut">commit ①</text>
+  <text x="250" y="96" font-size="11" class="mut">RPC</text>
+  <rect class="node" x="20" y="122" width="120" height="44" rx="6"/><text x="80" y="149" text-anchor="middle" font-size="13">app DB</text>
+  <rect class="node" x="200" y="122" width="120" height="44" rx="6"/><text x="260" y="149" text-anchor="middle" font-size="13">OpenFGA server</text>
+  <path class="edge" d="M260 166 L260 192" marker-end="url(#ah4)"/>
+  <text x="270" y="184" font-size="11" class="mut">commit ②</text>
+  <rect class="node" x="200" y="194" width="120" height="40" rx="6"/><text x="260" y="219" text-anchor="middle" font-size="13">OpenFGA DB</text>
+  <text x="80" y="210" text-anchor="middle" font-size="12" style="fill:var(--bad)">① and ② can</text>
+  <text x="80" y="226" text-anchor="middle" font-size="12" style="fill:var(--bad)">disagree</text>
+
+  <line x1="360" y1="20" x2="360" y2="245" stroke="var(--brd)"/>
+
+  <text x="545" y="22" text-anchor="middle" font-weight="700">atomicfga</text>
+  <rect class="node" x="485" y="40" width="120" height="34" rx="6"/><text x="545" y="62" text-anchor="middle" font-size="13">your app</text>
+  <path class="edge" d="M545 74 L545 96" marker-end="url(#ah4)"/>
+  <rect x="400" y="98" width="290" height="104" rx="8" fill="none" stroke="var(--c1)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="412" y="116" font-size="11" style="fill:var(--c1)">one transaction</text>
+  <rect class="node" x="412" y="124" width="126" height="28" rx="5"/><text x="475" y="143" text-anchor="middle" font-size="12">INSERT order</text>
+  <rect class="node" x="552" y="124" width="126" height="28" rx="5"/><text x="615" y="143" text-anchor="middle" font-size="12">fga.Write tuple</text>
+  <rect class="node" x="412" y="162" width="266" height="28" rx="5"/><text x="545" y="181" text-anchor="middle" font-size="12">fga.Check sees both, uncommitted</text>
+  <path class="edge" d="M545 202 L545 214" marker-end="url(#ah4)"/>
+  <rect class="node" x="470" y="216" width="150" height="34" rx="6"/><text x="545" y="238" text-anchor="middle" font-size="13">one DB, one commit</text>
+</svg>
+<figcaption>With atomicfga, authorization data commits or rolls back together with the application data it describes, and a Check inside the transaction sees the transaction’s own uncommitted writes.</figcaption>
+</figure>
+
+<p>In code (Go), the shape is: open your transaction, wrap it, call OpenFGA’s API on the wrapper:</p>
+<pre><code>tx, _ := db.BeginTx(ctx, nil)
+fga := engine.Session(atomicfga.SQLTx(tx))
+
+tx.ExecContext(ctx, `INSERT INTO orders ...`)
+fga.Write(ctx, &amp;openfgav1.WriteRequest{StoreId: store, Writes: ...})
+resp, _ := fga.Check(ctx, &amp;openfgav1.CheckRequest{StoreId: store, TupleKey: ...})
+
+tx.Commit() // both, or (Rollback) neither</code></pre>
+
+<p>The data lives in OpenFGA’s own tables in your database. Every one of them is keyed by <code>store</code> first, which is what makes a store (a tenant) a clean, movable slice:</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>table</th><th>key</th><th>what it holds</th><th>has a ULID?</th></tr></thead>
+  <tbody>
+    <tr><td><code>store</code></td><td><code>id</code></td><td>one row per store</td><td>the ID itself</td></tr>
+    <tr><td><code>authorization_model</code></td><td><code>(store, authorization_model_id)</code></td><td>immutable model versions</td><td>the ID itself — <strong>defines “latest”</strong></td></tr>
+    <tr><td><code>tuple</code></td><td><code>(store, object_type, object_id, relation, user…)</code></td><td>current relationships</td><td><code>ulid</code> column, minted at write</td></tr>
+    <tr><td><code>changelog</code></td><td><code>(store, ulid, object_type)</code></td><td>history of writes and deletes</td><td><code>ulid</code> — <strong>defines feed order</strong></td></tr>
+    <tr><td><code>assertion</code></td><td><code>(store, authorization_model_id)</code></td><td>test assertions for a model</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The Rust port (the evaluator that also runs in browsers) keeps only two tables — tuples keyed <code>(store, object, relation, user)</code> and models keyed <code>(store, model ID)</code> — and has no change feed. It never reads the clock: the caller supplies model IDs.</p>
+
+<!-- ============================================================ -->
+<div class="part">Part 3 · Clocks</div>
+
+<h2 id="ulid">7. ULIDs: IDs with a clock inside</h2>
+<p>OpenFGA names stores, models, tuples and changelog entries with <strong>ULIDs</strong>: 128-bit IDs written as 26 characters. The first 48 bits are the current time in milliseconds; the remaining 80 bits are random.</p>
+
+<figure class="fig">
+<div class="ulid" id="ulidshow"><span class="ts">01ARZ3NDEK</span><span class="rnd">TSV4RRFFQ69G5FAV</span></div>
+<svg viewBox="0 0 720 70" style="margin-top:10px" role="img" aria-label="ULID bit layout">
+  <rect x="0" y="10" width="270" height="30" rx="4" fill="var(--c1)" opacity=".18" stroke="var(--c1)"/>
+  <text x="135" y="30" text-anchor="middle" font-size="12.5" style="fill:var(--c1)">48 bits · milliseconds since 1970</text>
+  <rect x="274" y="10" width="446" height="30" rx="4" fill="var(--c4)" opacity=".18" stroke="var(--c4)"/>
+  <text x="497" y="30" text-anchor="middle" font-size="12.5" style="fill:var(--c4)">80 bits · random</text>
+  <text x="0" y="60" font-size="11" class="mut">sorting ULIDs as text sorts them by the clock reading of whoever minted them</text>
+</svg>
+<div class="row" style="margin-top:10px">
+  <input type="text" id="ulidin" value="01ARZ3NDEKTSV4RRFFQ69G5FAV" aria-label="ULID to decode" spellcheck="false">
+  <button class="btn" type="button" id="ulidnow">Mint one now</button>
+</div>
+<div class="small" id="ulidout" style="margin-top:6px"></div>
+<figcaption>Paste any model ID from your database to see when (by its minting machine’s clock) it was created.</figcaption>
+</figure>
+
+<p>This is a reasonable design for <em>unique</em> IDs: no coordination, roughly time-ordered, index-friendly. The trouble starts when the <em>order</em> of IDs is given a meaning — “greatest = newest” — because then correctness depends on every machine that mints IDs agreeing about the time.</p>
+<div class="callout"><p>Within one process, OpenFGA’s ULID library keeps IDs minted in the same millisecond increasing. Across processes, across machines, or after a machine’s clock is stepped backwards, nothing does.</p></div>
+
+<h2 id="clockmap">8. Every place the clock enters</h2>
+<p>Read straight from upstream OpenFGA (v1.22) and atomicfga’s session code:</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>what</th><th>clock used</th><th>what the order decides</th><th>exposure</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Check / ListObjects answer</strong>, given a model</td><td>none</td><td>—</td><td><span class="tag t-none">none</span></td></tr>
+    <tr><td>Conditions (CEL)</td><td>none — time comes from the request’s <code>context</code></td><td>—</td><td><span class="tag t-none">none</span></td></tr>
+    <tr><td><strong>Model ID</strong> <span class="small">(<code>ulid.Make()</code>, write_authzmodel.go)</span></td><td>app server, at WriteAuthorizationModel</td><td><strong>which model a request uses when it names none</strong> (<code>ORDER BY authorization_model_id DESC LIMIT 1</code>)</td><td><span class="tag t-high">OpenFGA: silent wrong rules</span> <span class="tag t-none">atomicfga: none</span></td></tr>
+    <tr><td>Changelog <code>ulid</code> <span class="small">(sqlite.go:255)</span></td><td>app server, when <code>Write</code> is <em>called</em></td><td>ReadChanges order and continuation tokens</td><td><span class="tag t-med">medium: feed can skip</span></td></tr>
+    <tr><td>Changelog <code>inserted_at</code></td><td>database, at the INSERT statement</td><td>ReadChanges “horizon” (hide entries newer than N)</td><td><span class="tag t-med">part of the fix for the above</span></td></tr>
+    <tr><td>Tuple <code>ulid</code></td><td>app server, at Write</td><td><code>Read</code> pagination order</td><td><span class="tag t-low">low: cosmetic</span></td></tr>
+    <tr><td>Store ID</td><td>app server, at CreateStore</td><td><code>ListStores</code> order</td><td><span class="tag t-low">low: identity only</span></td></tr>
+  </tbody>
+</table>
+</div>
+<p>So: <strong>evaluation itself is clock-free.</strong> The two real exposures are deciding <em>which model</em> applies, and ordering the <em>change feed</em>. The first is about model ID handling, and is the one §11 removes. Both exist in any upstream OpenFGA deployment with more than one server — atomicfga inherits them rather than adding them, and moving tenants between servers makes them more likely to bite.</p>
+
+<h2 id="skew">9. Failure 1: the latest model goes backwards</h2>
+<p>Server A has a correct clock. Tenant <em>acme</em> writes model M1 on A, then is moved to server B, whose clock runs behind. On B, acme deploys new rules as model M2. Drag the sliders:</p>
+
+<figure class="fig">
+<label class="sl"><span>Server B’s clock error</span><input type="range" id="skewin" min="-300" max="300" step="5" value="-120"><span class="mono" id="skewv"></span></label>
+<label class="sl"><span>Time from M1 to M2 (real)</span><input type="range" id="gapin" min="0" max="600" step="5" value="45"><span class="mono" id="gapv"></span></label>
+<div id="skewsvg"></div>
+<div class="grid2" style="margin-top:8px">
+  <div class="card"><h4>OpenFGA: “latest = greatest ID”</h4><p id="skewlatest"></p></div>
+  <div class="card"><h4>atomicfga: the request names the model (§11)</h4><p id="skewpinned"></p></div>
+</div>
+<figcaption>The danger is the silence: WriteAuthorizationModel succeeds, M2 is readable by ID, and nothing errors — requests without an explicit model ID simply keep evaluating under M1. It takes a clock error larger than the gap between two model writes for the same store. Model writes are rare, so the gap is usually long; but deploy scripts that write two models in quick succession, a VM whose clock jumped, or a tenant move right after a deploy can all close it.</figcaption>
+</figure>
+
+<h2 id="latecommit">10. Failure 2: a change feed that skips</h2>
+<p>This one needs no clock error at all. A changelog entry’s ULID is taken when <code>Write</code> is <em>called</em>; it becomes visible when the transaction <em>commits</em>. atomicfga’s whole point is that transactions are yours and may do other work in between. A consumer of <code>ReadChanges</code> remembers the last ULID it saw and asks for everything after it:</p>
+
+<figure class="fig">
+<svg viewBox="0 0 720 250" role="img" aria-label="Late-committing transaction skipped by a change feed consumer">
+  <defs>
+    <marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--mut)"/></marker>
+  </defs>
+  <!-- axis -->
+  <line x1="110" y1="226" x2="700" y2="226" stroke="var(--brd)" stroke-width="1.5"/>
+  <g font-size="11" class="mut">
+    <text x="130" y="244" text-anchor="middle" class="mut">0 s</text>
+    <text x="230" y="244" text-anchor="middle" class="mut">1 s</text>
+    <text x="330" y="244" text-anchor="middle" class="mut">2 s</text>
+    <text x="430" y="244" text-anchor="middle" class="mut">3 s</text>
+    <text x="530" y="244" text-anchor="middle" class="mut">4 s</text>
+    <text x="630" y="244" text-anchor="middle" class="mut">5 s</text>
+  </g>
+  <!-- lanes -->
+  <text x="10" y="54" font-size="12.5" font-weight="600">Tx 1</text><text x="10" y="70" font-size="11" class="mut">long</text>
+  <text x="10" y="124" font-size="12.5" font-weight="600">Tx 2</text><text x="10" y="140" font-size="11" class="mut">short</text>
+  <text x="10" y="194" font-size="12.5" font-weight="600">Feed</text><text x="10" y="210" font-size="11" class="mut">consumer</text>
+
+  <rect x="130" y="44" width="510" height="26" rx="5" fill="var(--c4)" opacity=".16" stroke="var(--c4)"/>
+  <circle cx="130" cy="57" r="6" fill="var(--c4)"/>
+  <text x="142" y="38" font-size="11.5">Write → entry ULID <tspan class="mono">t=0.0</tspan></text>
+  <text x="380" y="62" text-anchor="middle" font-size="11.5" class="mut">…application work…</text>
+  <line x1="640" y1="40" x2="640" y2="76" stroke="var(--c4)" stroke-width="3"/>
+  <text x="634" y="92" text-anchor="end" font-size="11.5">commit: entry visible now</text>
+
+  <rect x="230" y="114" width="24" height="26" rx="5" fill="var(--c1)" opacity=".18" stroke="var(--c1)"/>
+  <circle cx="230" cy="127" r="6" fill="var(--c1)"/>
+  <text x="262" y="132" font-size="11.5">Write + commit → ULID <tspan class="mono">t=1.0</tspan></text>
+
+  <circle cx="330" cy="197" r="6" fill="var(--fg)"/>
+  <text x="340" y="190" font-size="11.5">poll: sees t=1.0</text>
+  <text x="340" y="205" font-size="11.5" class="mut">token := t=1.0</text>
+  <circle cx="680" cy="197" r="6" fill="var(--fg)"/>
+  <text x="672" y="180" text-anchor="end" font-size="11.5">poll: ULID &gt; t=1.0 ?</text>
+  <text x="672" y="214" text-anchor="end" font-size="11.5" style="fill:var(--bad)">t=0.0 never delivered</text>
+</svg>
+<figcaption>Commit order is not ULID order, so entries can appear “in the past”. Upstream’s only defence is the <strong>horizon offset</strong>: ReadChanges hides entries whose <code>inserted_at</code> (set by the database when the statement runs, not at commit) is newer than N seconds. It is safe only if N exceeds your longest write transaction. If you don’t consume ReadChanges, none of this affects you.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<div class="part">Part 4 · Model ID handling</div>
+
+<h2 id="pointer">11. Fix: choose the model by data, not by time</h2>
+<p>The principle: <strong>which model applies should be a fact your transaction reads, not an inference from timestamps.</strong> atomicfga makes this cheap, because your own tables share the transaction with OpenFGA’s.</p>
+
+<h3>Option 1 — a model pointer in your schema</h3>
+<figure class="fig">
+<svg viewBox="0 0 720 230" role="img" aria-label="Model pointer table">
+  <defs>
+    <marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--c1)"/></marker>
+  </defs>
+  <text x="20" y="22" font-size="12" font-weight="700">authz_model_pointer</text>
+  <text x="20" y="38" font-size="11" class="mut">your table</text>
+  <rect class="node" x="20" y="48" width="240" height="30" rx="4"/>
+  <text x="32" y="68" font-size="11" class="mut">store_id</text><text x="150" y="68" font-size="11" class="mut">model_id</text>
+  <rect class="node" x="20" y="78" width="240" height="30" rx="4" style="stroke:var(--c1)"/>
+  <text x="32" y="98" font-size="12" class="mono">acme</text><text x="150" y="98" font-size="12" class="mono" style="fill:var(--c1)">M2</text>
+
+  <text x="420" y="22" font-size="12" font-weight="700">authorization_model</text>
+  <text x="420" y="38" font-size="11" class="mut">OpenFGA’s table (immutable rows)</text>
+  <rect class="node" x="420" y="48" width="280" height="30" rx="4"/><text x="432" y="68" font-size="12" class="mono">acme · M1</text>
+  <rect class="node" x="420" y="82" width="280" height="30" rx="4" style="stroke:var(--c1);stroke-width:2"/><text x="432" y="102" font-size="12" class="mono">acme · M2</text><text x="690" y="102" text-anchor="end" font-size="11" style="fill:var(--c1)">in use</text>
+  <rect class="node" x="420" y="116" width="280" height="30" rx="4"/><text x="432" y="136" font-size="12" class="mono">acme · M3</text><text x="690" y="136" text-anchor="end" font-size="11" class="mut">greatest ID — ignored</text>
+  <path d="M260 93 C 330 93, 350 97, 418 97" fill="none" stroke="var(--c1)" stroke-width="2" marker-end="url(#ah6)"/>
+
+  <text x="20" y="176" font-size="12.5"><tspan font-weight="700">Deploy</tspan>: in one transaction, WriteAuthorizationModel → UPDATE pointer.</text>
+  <text x="20" y="196" font-size="12.5"><tspan font-weight="700">Roll back</tspan>: UPDATE pointer to an older ID. (With “latest”, you must re-write the old model as a new one.)</text>
+  <text x="20" y="216" font-size="12.5"><tspan font-weight="700">Every request</tspan>: read the pointer, pass it as <tspan class="mono">authorization_model_id</tspan>.</text>
+</svg>
+<figcaption>M3 here could be a model written by a server with a fast clock, a staged model not yet rolled out, or a canary for another tenant. None of that matters: the pointer decides.</figcaption>
+</figure>
+
+<pre><code>// Deploy a model: the new rules and the switch to them commit together.
+tx, _ := db.BeginTx(ctx, nil)
+fga := engine.Session(atomicfga.SQLTx(tx))
+m, err := fga.WriteAuthorizationModel(ctx, &amp;openfgav1.WriteAuthorizationModelRequest{
+    StoreId: store, SchemaVersion: "1.1", TypeDefinitions: types,
+})
+_, err = tx.ExecContext(ctx, `
+    INSERT INTO authz_model_pointer (store_id, model_id) VALUES (?, ?)
+    ON CONFLICT (store_id) DO UPDATE SET model_id = excluded.model_id`,
+    store, m.GetAuthorizationModelId())
+tx.Commit()
+
+// Any request: the pointer is read in the same transaction as everything else.
+var model string
+tx.QueryRowContext(ctx, `SELECT model_id FROM authz_model_pointer WHERE store_id = ?`, store).Scan(&amp;model)
+resp, err := fga.Check(ctx, &amp;openfgav1.CheckRequest{
+    StoreId: store, AuthorizationModelId: model, TupleKey: key,
+})</code></pre>
+<p class="small">SQLite placeholders shown; use <code>$1, $2</code> on Postgres. Pass the same ID to <code>Write</code>, <code>ListObjects</code> and the rest: Write validates tuples against a model too.</p>
+<p>Cost: one indexed read per transaction (reuse it for every call in that transaction). atomicfga already queries the model table on every request either way — for “latest” when no ID is given, or to confirm the named ID is visible in your transaction — so the extra work is small. OpenFGA’s own documentation also recommends passing a model ID in production.</p>
+
+<h3>Option 2 — every request names its model <span class="tag t-none">always on</span></h3>
+<p>Option 1 is a convention, and conventions get forgotten: one call without an ID would silently fall back to “latest”. So atomicfga <em>refuses</em> every request that uses a model but names none — Check, BatchCheck, Expand, ListObjects, StreamedListObjects, ListUsers, Write, RustCheck — with <code>ErrModelIDRequired</code> (InvalidArgument). There is no setting to turn it off: the convention is a guarantee, the pit of success. The Rust API and the browser evaluator answer such requests with <code>invalid_argument</code>.</p>
+<pre><code>_, err = fga.Check(ctx, &amp;openfgav1.CheckRequest{StoreId: store, TupleKey: key})
+errors.Is(err, atomicfga.ErrModelIDRequired) // true: name the model</code></pre>
+
+<h3>Option 3 — model IDs only go up <span class="tag t-none">implemented</span></h3>
+<p>The model written last always ranks first. In Go, where OpenFGA mints the ID, atomicfga reads the store’s greatest model ID in the write’s transaction; if the freshly minted ID is not above it (the clock is behind), the model is stored under the greatest ID’s millisecond plus one, with fresh random bits, and the response names that ID. Nothing fails, and nothing is hidden: the response always tells you the ID. On PostgreSQL, model writes to one store also take a transaction-scoped advisory lock, so two transactions writing models to the same store rank in commit order (at READ COMMITTED, the default). In the Rust port the caller supplies the ID, so a non-increasing one is refused with <code>invalid_argument</code> before anything is written. With options 1 and 2 in place this is defence in depth, and it keeps “latest”, <code>ReadAuthorizationModels</code> order and any tooling that reads them honest.</p>
+
+<div class="callout ok"><p><strong>Result:</strong> you keep Option 1 in your schema; atomicfga enforces Option 2 and Option 3. Together they make the clock irrelevant to which rules a Check applies.</p></div>
+
+<h2 id="after">12. What is left, and moving tenants</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>concern</th><th>upstream OpenFGA</th><th>atomicfga (options 1–3)</th></tr></thead>
+  <tbody>
+    <tr><td>Which model a request uses</td><td>greatest ULID — <span class="tag t-high">clock</span></td><td>pointer row in your transaction — <span class="tag t-none">no clock</span></td></tr>
+    <tr><td>Rolling back a model</td><td>re-write old content as a new model</td><td>update the pointer</td></tr>
+    <tr><td>Per-tenant rollout / canary</td><td>impossible to stage without making it “latest”</td><td>write freely; point when ready</td></tr>
+    <tr><td>Tenant move to another server</td><td>new server’s clock must be ahead of the last model write</td><td>pointer travels with the rows</td></tr>
+    <tr><td>Clock goes backwards on deploy</td><td>silent: old rules stay in force</td><td>new model still ranks first (Go raises its ID; Rust refuses the ID)</td></tr>
+    <tr><td>Two transactions write models to one store</td><td>ranked by their clocks</td><td>ranked in commit order (Postgres: advisory lock; SQLite: one writer)</td></tr>
+    <tr><td>ReadChanges order</td><td><span class="tag t-med">clock + commit order</span></td><td><span class="tag t-med">unchanged</span> — horizon ≥ longest transaction, or a separate fix</td></tr>
+    <tr><td>Read pagination, store IDs</td><td><span class="tag t-low">cosmetic</span></td><td><span class="tag t-low">unchanged</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>And this is what moving a tenant looks like once model selection is data:</p>
+<figure class="fig">
+<svg viewBox="0 0 720 270" role="img" aria-label="Moving a tenant between servers">
+  <defs>
+    <marker id="ah7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--c1)"/></marker>
+  </defs>
+  <g id="servers"></g>
+  <path d="M220 170 C 260 236, 464 236, 504 172" fill="none" stroke="var(--c1)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah7)"/>
+  <text x="362" y="214" text-anchor="middle" font-size="12" style="fill:var(--c1)">move acme</text>
+  <text x="380" y="252" text-anchor="middle" font-size="12" class="mut">copy rows WHERE store = 'acme' — app tables, tuple, changelog, authorization_model, assertion, pointer</text>
+</svg>
+<ol class="small" style="margin:.4rem 0 0; color:var(--fg)">
+  <li><strong>Fence</strong> acme’s writes (routing lease or epoch) — atomicfga has no cross-server lock; this is yours.</li>
+  <li><strong>Copy</strong> its rows verbatim, IDs included (never replay through the API: that would mint new ULIDs and break tokens and pinned IDs). With a database file per tenant, copy the file.</li>
+  <li><strong>Verify</strong> (row counts or a checksum per table), then <strong>flip</strong> routing and lift the fence.</li>
+</ol>
+<figcaption>Both servers must run the same atomicfga build and schema migration level. The new server’s model cache starts cold, which is harmless: cached models are keyed by (store, ID) and never change.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<div class="part">Appendix</div>
+
+<h2 id="others">A. Other authorization systems, for multi-tenant placement</h2>
+<p>For moving tenants around, three properties matter: <em>all</em> authorization state is keyed by tenant; none of it lives only on one server; and nothing orders it by wall clock. atomicfga has the first two and, with §11, the third for model selection. Systems that store nothing get these trivially — because your relationship data becomes ordinary app tables — so the real differences lie elsewhere:</p>
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>atomicfga (OpenFGA in your tx)</th><th>gatehouse</th><th>Cedar</th><th>SpiceDB</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Rules live in</strong></td><td>data: a model per store</td><td>Rust code compiled into the app</td><td>data: policy text (can be per tenant)</td><td>data: one schema per datastore</td></tr>
+    <tr><td><strong>Relationships live in</strong></td><td>tuple rows in your DB</td><td>your tables, loaded by your <code>FactSource</code></td><td>entities your app passes with each request</td><td>SpiceDB’s own datastore</td></tr>
+    <tr><td><strong>Same transaction as app data</strong></td><td>yes, by construction</td><td>if your fact source reads your transaction</td><td>yes (you load the entities)</td><td>no; consistency via ZedTokens</td></tr>
+    <tr><td><strong>Graph traversal</strong> (nested groups, inheritance)</td><td>built in, any depth</td><td><code>RebacPolicy</code> over relationships you load; deeper traversal is your code</td><td><code>in</code> over the entity hierarchy you supply</td><td>built in</td></tr>
+    <tr><td><strong>Per-tenant rules</strong></td><td>yes</td><td>no (code); data-driven policies by hand</td><td>yes</td><td>shared schema</td></tr>
+    <tr><td><strong>Clock in decisions</strong></td><td>none for decisions (§11)</td><td>none</td><td>none</td><td>revisions (Postgres: transaction IDs; CockroachDB/Spanner: timestamps)</td></tr>
+    <tr><td><strong>Verification</strong></td><td>differential vs upstream, Quint spec, mutation-tested gates</td><td>ordinary tests</td><td>formally specified, proofs in Lean, SMT-based policy analysis</td><td>conformance tests</td></tr>
+    <tr><td><strong>Maturity</strong></td><td>prototype wrapper over mature OpenFGA</td><td>0.5.x</td><td>mature (e.g. Amazon Verified Permissions)</td><td>mature</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>gatehouse</strong> is an in-process policy library: policies are async Rust (RBAC, attribute predicates, relationship checks), deny overrides allow, and facts come from sources you implement, batched and cached per request. It stores nothing and reads no clock, so it is trivially “placement friendly” — but only because your relationship data and its traversal become your problem, and rules can’t differ per tenant without you building that. <strong>Cedar</strong> is the strongest choice if mechanical verifiability of the rules is paramount and your relationships are shallow enough to hand in with each request. <strong>SpiceDB</strong> is a Zanzibar-style service like upstream OpenFGA, so it reintroduces the two-commit problem atomicfga exists to remove.</p>
+
+<h2 id="glossary">B. Glossary</h2>
+<dl class="gloss">
+  <dt>Store</dt><dd>An isolated set of tuples and models. One per tenant is the natural multi-tenant layout.</dd>
+  <dt>Authorization model</dt><dd>Types, relations and rewrite rules. Immutable; each write creates a new version with a new ID.</dd>
+  <dt>Tuple</dt><dd>One stored relationship: <em>user</em> has <em>relation</em> to <em>object</em>, optionally with a condition.</dd>
+  <dt>Userset</dt><dd>A set of users named by an object and relation, e.g. <code>group:eng#member</code>.</dd>
+  <dt>Tuple-to-userset</dt><dd>A rule that follows a relation to another object and asks it a question: <code>viewer from parent</code>.</dd>
+  <dt>Check</dt><dd>“Does user U have relation R on object O?” — a search over the model and tuples.</dd>
+  <dt>Latest model</dt><dd>The model a request uses when it names none: in OpenFGA, the greatest model ID.</dd>
+  <dt>ULID</dt><dd>A 128-bit ID: 48 bits of millisecond timestamp, 80 random bits; sorts by its minting clock.</dd>
+  <dt>Changelog / ReadChanges</dt><dd>The ordered history of tuple writes and deletes, and the API that pages through it with a continuation token.</dd>
+  <dt>Horizon offset</dt><dd>ReadChanges hides entries younger than this, giving in-flight transactions time to commit.</dd>
+  <dt>Model pointer</dt><dd>A row in your schema naming the model a store uses; chosen in a transaction, not by time.</dd>
+</dl>
+
+</main>
+
+<script>
+(() => {
+  // --- Check walkthrough -------------------------------------------------
+  const tree = document.getElementById("checktree");
+  const verdict = document.getElementById("checkverdict");
+  const buttons = document.querySelectorAll(".seg button[data-user]");
+  function showUser(u) {
+    buttons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.user === u)));
+    tree.querySelectorAll(".res").forEach((el) => {
+      const v = el.dataset[u];
+      el.className = "res " + v;
+      el.textContent = v === "yes" ? "✓" : v === "no" ? "✗" : "–";
+    });
+    tree.querySelectorAll(".who").forEach((el) => (el.textContent = "user:" + u));
+    tree.querySelectorAll(".whotuple").forEach((el) => (el.textContent = u === "anne" ? "1" : "2"));
+    tree.querySelectorAll(".blockedres").forEach((el) => (el.textContent = u === "anne" ? "none" : "found (tuple 5)"));
+    if (u === "anne") {
+      verdict.className = "verdict ok";
+      verdict.textContent = "allowed — anne is a viewer (via eng → q3 → plan) and is not blocked.";
+    } else {
+      verdict.className = "verdict bad";
+      verdict.textContent = "denied — bob is a viewer by the same path, but “but not blocked” removes him.";
+    }
+  }
+  buttons.forEach((b) => b.addEventListener("click", () => showUser(b.dataset.user)));
+  showUser("anne");
+
+  // --- ULID decoder ------------------------------------------------------
+  const A = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const input = document.getElementById("ulidin");
+  const out = document.getElementById("ulidout");
+  const show = document.getElementById("ulidshow");
+  function decode(s) {
+    s = s.trim().toUpperCase();
+    if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(s)) return null;
+    let t = 0;
+    for (let i = 0; i < 10; i++) t = t * 32 + A.indexOf(s[i]);
+    return { s, t };
+  }
+  function mint(ms) {
+    let ts = "";
+    for (let i = 0, t = ms; i < 10; i++, t = Math.floor(t / 32)) ts = A[t % 32] + ts;
+    let rnd = "";
+    for (const b of crypto.getRandomValues(new Uint8Array(16))) rnd += A[b % 32];
+    return ts + rnd;
+  }
+  function render() {
+    const d = decode(input.value);
+    if (!d) {
+      out.textContent = "Not a ULID: 26 characters of Crockford base32, first character 0–7.";
+      return;
+    }
+    show.innerHTML = `<span class="ts">${d.s.slice(0, 10)}</span><span class="rnd">${d.s.slice(10)}</span>`;
+    out.textContent = `timestamp ${d.t} ms → ${new Date(d.t).toISOString()} (by the minting machine's clock)`;
+  }
+  input.addEventListener("input", render);
+  document.getElementById("ulidnow").addEventListener("click", () => {
+    input.value = mint(Date.now());
+    render();
+  });
+  render();
+
+  // --- Skew simulator ----------------------------------------------------
+  const skew = document.getElementById("skewin");
+  const gap = document.getElementById("gapin");
+  const skewv = document.getElementById("skewv");
+  const gapv = document.getElementById("gapv");
+  const holder = document.getElementById("skewsvg");
+  const latestEl = document.getElementById("skewlatest");
+  const pinnedEl = document.getElementById("skewpinned");
+  const fmt = (s) => {
+    const sign = s < 0 ? "−" : s > 0 ? "+" : "±";
+    const a = Math.abs(s);
+    return `${sign}${Math.floor(a / 60)}m${String(a % 60).padStart(2, "0")}s`;
+  };
+  function sim() {
+    const k = Number(skew.value), g = Number(gap.value);
+    skewv.textContent = fmt(k);
+    gapv.textContent = `${Math.floor(g / 60)}m${String(g % 60).padStart(2, "0")}s`;
+    const m1 = 0, m2real = g, m2id = g + k;
+    const lo = -300, hi = 600, x0 = 40, x1 = 690;
+    const X = (v) => x0 + ((v - lo) / (hi - lo)) * (x1 - x0);
+    const newerWins = m2id > m1, tie = m2id === m1;
+    const c2 = tie ? "var(--warn)" : newerWins ? "var(--ok)" : "var(--bad)";
+    holder.innerHTML = `
+      <svg viewBox="0 0 720 170" role="img" aria-label="Real time versus ID time for two model writes">
+        <text x="10" y="20" font-size="11.5" class="mut">real time</text>
+        <line x1="${x0}" y1="48" x2="${x1}" y2="48" stroke="var(--brd)" stroke-width="2"/>
+        <text x="10" y="114" font-size="11.5" class="mut">order of IDs (what “latest” sorts by)</text>
+        <line x1="${x0}" y1="128" x2="${x1}" y2="128" stroke="var(--brd)" stroke-width="2"/>
+        <circle cx="${X(m1)}" cy="48" r="7" fill="var(--c1)"/>
+        <text x="${X(m1) - 10}" y="36" text-anchor="end" font-size="12">M1 on A</text>
+        <circle cx="${X(m2real)}" cy="48" r="7" fill="var(--c4)"/>
+        <text x="${X(m2real) + 10}" y="72" text-anchor="start" font-size="12">M2 on B</text>
+        <line x1="${X(m1)}" y1="55" x2="${X(m1)}" y2="121" stroke="var(--c1)" stroke-dasharray="3 3"/>
+        <line x1="${X(m2real)}" y1="55" x2="${X(m2id)}" y2="121" stroke="${c2}" stroke-dasharray="3 3"/>
+        <circle cx="${X(m1)}" cy="128" r="7" fill="var(--c1)"/>
+        <circle cx="${X(m2id)}" cy="128" r="7" fill="${c2}"/>
+        <text x="${X(m1)}" y="154" text-anchor="middle" font-size="12">M1</text>
+        <text x="${X(m2id)}" y="154" text-anchor="middle" font-size="12" style="fill:${c2}" dy="${Math.abs(m2id - m1) < 40 ? -36 : 0}">M2</text>
+      </svg>`;
+    if (tie) {
+      latestEl.innerHTML = `<span class="verdict" style="color:var(--warn)">Same millisecond: the random part of the ID decides — a coin flip.</span>`;
+    } else if (newerWins) {
+      latestEl.innerHTML = `<span class="verdict ok">Latest = M2.</span> Correct — B’s error (${fmt(k)}) is smaller than the gap.`;
+    } else {
+      latestEl.innerHTML = `<span class="verdict bad">Latest = M1 — the old rules.</span> M2’s ID sorts ${fmt(m1 - m2id).replace(/^[+−±]/, "")} before M1’s. No error is reported.`;
+    }
+    pinnedEl.innerHTML = `<span class="verdict ok">Uses M2.</span> The deploy transaction set the pointer to M2; IDs are never compared.`;
+  }
+  skew.addEventListener("input", sim);
+  gap.addEventListener("input", sim);
+  sim();
+
+  // --- Placement diagram -------------------------------------------------
+  const g = document.getElementById("servers");
+  const tenants = [["t01", "t07", "t13", "t19"], ["t02", "acme", "t08", "t14"], ["t03", "t09", "t15", "t21"], ["t04", "t10"], ["t05", "t11", "t17"]];
+  let html = "";
+  tenants.forEach((ts, i) => {
+    const x = 14 + i * 142;
+    html += `<rect class="node" x="${x}" y="20" width="128" height="${44 + 26 * 4}" rx="8"/>`;
+    html += `<text x="${x + 64}" y="42" text-anchor="middle" font-size="12.5" font-weight="700">server ${i + 1}</text>`;
+    ts.forEach((t, j) => {
+      const y = 54 + j * 26;
+      const moving = t === "acme";
+      html += `<rect x="${x + 14}" y="${y}" width="100" height="20" rx="10" fill="${moving ? "var(--c1)" : "var(--codebg)"}" opacity="${moving ? 0.25 : 1}" stroke="${moving ? "var(--c1)" : "var(--brd)"}" stroke-dasharray="${moving ? "4 3" : "0"}"/>`;
+      html += `<text x="${x + 64}" y="${y + 14}" text-anchor="middle" font-size="11" class="mono">${t}</text>`;
+    });
+    if (i === 3) {
+      const y = 54 + 2 * 26;
+      html += `<rect x="${x + 14}" y="${y}" width="100" height="20" rx="10" fill="var(--c1)" opacity=".25" stroke="var(--c1)"/>`;
+      html += `<text x="${x + 64}" y="${y + 14}" text-anchor="middle" font-size="11" class="mono">acme</text>`;
+    }
+  });
+  g.innerHTML = html;
+})();
+</script>
+</body>
+</html>
